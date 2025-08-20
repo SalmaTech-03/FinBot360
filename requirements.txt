@@ -1,24 +1,24 @@
 # Core App & Data Handling
-streamlit
-pandas
-numpy
-yfinance
-plotly
-scikit-learn
+streamlit==1.26.0
+pandas==2.1.0
+numpy==1.25.0
+yfinance==0.2.27
+plotly==6.0.0
+scikit-learn==1.1.3
 
-# --- Stable Machine Learning Configuration ---
+# Stable Machine Learning Configuration
 tensorflow==2.15.0
 
-# Transformers with a key dependency, and a specific PyTorch version
+# PyTorch & Transformers
 torch==2.1.0
 safetensors==0.4.2
-transformers[sentencepiece]
+transformers[sentencepiece]==4.32.2
 
-# --- API Libraries ---
-google-generativeai
-alpha-vantage
-feedparser
-streamlit-autorefresh
+# API Libraries
+google-generativeai==0.1.1
+alpha-vantage==2.3.1
+feedparser==6.0.10
+streamlit-autorefresh==0.1.9
 
-# Optional fallback library
-openai
+# Optional fallback
+openai==0.27.10
