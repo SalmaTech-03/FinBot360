@@ -8,7 +8,7 @@ plotly
 scikit-learn
 
 # --- Stable Machine Learning Configuration ---
-tensorflow==2.15.0
+tensorflow>=2.15.0,<2.16
 
 # Transformers with a key dependency, and a specific PyTorch version
 torch==2.1.0
