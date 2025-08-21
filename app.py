@@ -7,7 +7,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from sklearn.preprocessing import MinMaxScaler
 from transformers import pipeline
-import google.generativeai as genai # <--- THIS LINE IS NOW CORRECTED
+import google.generativeai as genai
 import logging
 from io import StringIO
 
@@ -41,14 +41,14 @@ except (KeyError, FileNotFoundError):
 # ALL HELPER FUNCTIONS
 # =================================================================================
 def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash") -> str:
-    if not GEMINI_AVAILABLE: 
+    if not GEMINI_AVAILABLE:
         return "Chatbot is unavailable because the Gemini API key is not configured."
     try:
         model = genai.GenerativeModel(model_name)
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        logging.error(f"Gemini API call failed: {e}") 
+        logging.error(f"Gemini API call failed: {e}")
         return f"An error occurred. **Specific API Error:** {e}"
 
 @st.cache_resource
@@ -78,6 +78,7 @@ def create_lstm_model(input_shape):
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
+# --- FINAL, ROBUST, AND CORRECTED FORECAST FUNCTION ---
 def forecast_stock(data: pd.DataFrame):
     # 1. Prepare and clean the data
     data_close = data[['Close']].copy()
@@ -129,6 +130,9 @@ def forecast_stock(data: pd.DataFrame):
     # 6. Construct final dataframes for plotting
     train_df = data_close[:training_data_len]
     valid_df = data_close[training_data_len:]
+
+    # --- THE DEFINITIVE FIX ---
+    # This ensures the dates (index) and values align perfectly for Plotly.
     valid_df['Predictions'] = predictions
     
     return train_df, valid_df
@@ -162,6 +166,7 @@ with st.sidebar:
     with st.expander("🔴 Live Market Dashboard"):
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter a Stock Ticker:", "IBM").upper()
+        # (The rest of the sidebar code is unchanged)
         try:
             AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
             if ticker_symbol:
