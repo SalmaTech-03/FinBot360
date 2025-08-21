@@ -80,12 +80,13 @@ def create_lstm_model(input_shape):
 
 # --- FINAL, ROBUST, AND CORRECTED FORECAST FUNCTION ---
 def forecast_stock(data: pd.DataFrame):
-    # 1. Prepare and clean the data
+    # 1. Prepare and clean data
     data_close = data[['Close']].copy()
     data_close.dropna(inplace=True)
     if len(data_close) < 80:
         st.error("Not enough valid data points to forecast (need at least 80).")
         return None, None
+
     dataset = data_close.values
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(dataset)
@@ -105,7 +106,7 @@ def forecast_stock(data: pd.DataFrame):
     x_train, y_train = np.array(x_train), np.array(y_train)
     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
 
-    # 3. Train the model
+    # 3. Train model
     model = create_lstm_model((x_train.shape[1], 1))
     with st.spinner('Training LSTM model... This may take a moment.'):
         model.fit(x_train, y_train, batch_size=32, epochs=10, verbose=0)
@@ -127,12 +128,13 @@ def forecast_stock(data: pd.DataFrame):
     predictions = model.predict(x_test)
     predictions = scaler.inverse_transform(predictions)
 
-    # 6. Construct final dataframes for plotting
+    # 6. --- THE DEFINITIVE FIX: Construct the final dataframes ---
     train_df = data_close[:training_data_len]
-    valid_df = data_close[training_data_len:]
-
-    # --- THE DEFINITIVE FIX ---
-    # This ensures the dates (index) and values align perfectly for Plotly.
+    
+    # Create the validation dataframe with the correct dates
+    validation_dates = data_close.index[training_data_len:]
+    valid_df = pd.DataFrame(index=validation_dates)
+    valid_df['Close'] = data_close['Close'][training_data_len:]
     valid_df['Predictions'] = predictions
     
     return train_df, valid_df
@@ -166,7 +168,6 @@ with st.sidebar:
     with st.expander("🔴 Live Market Dashboard"):
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter a Stock Ticker:", "IBM").upper()
-        # (The rest of the sidebar code is unchanged)
         try:
             AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
             if ticker_symbol:
