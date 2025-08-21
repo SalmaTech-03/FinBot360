@@ -7,7 +7,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from sklearn.preprocessing import MinMaxScaler
 from transformers import pipeline
-import google.genergenerativeai as genai
+import google.generativeai as genai # <--- THIS LINE IS NOW CORRECTED
 import logging
 from io import StringIO
 
@@ -78,7 +78,6 @@ def create_lstm_model(input_shape):
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-# --- FINAL, ROBUST, AND CORRECTED FORECAST FUNCTION ---
 def forecast_stock(data: pd.DataFrame):
     # 1. Prepare and clean the data
     data_close = data[['Close']].copy()
@@ -130,10 +129,6 @@ def forecast_stock(data: pd.DataFrame):
     # 6. Construct final dataframes for plotting
     train_df = data_close[:training_data_len]
     valid_df = data_close[training_data_len:]
-
-    # --- THE DEFINITIVE FIX ---
-    # We must explicitly assign the predictions to a new column in the validation dataframe.
-    # This ensures the dates (index) and values align perfectly for Plotly.
     valid_df['Predictions'] = predictions
     
     return train_df, valid_df
@@ -167,7 +162,6 @@ with st.sidebar:
     with st.expander("🔴 Live Market Dashboard"):
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter a Stock Ticker:", "IBM").upper()
-        # (The rest of the sidebar code is unchanged)
         try:
             AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
             if ticker_symbol:
