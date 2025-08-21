@@ -104,14 +104,14 @@ def create_lstm_model(input_shape):
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-# --- CORRECTED FUNCTION ---
+# --- FINAL CORRECTED FUNCTION ---
 def forecast_stock(data: pd.DataFrame):
     scaled_data, scaler = preprocess_for_forecasting(data)
     if scaled_data is None: 
         return None, None
     
-    if len(scaled_data) < 80: # Increased minimum data length for reliability
-        st.error("Not enough historical data to create a reliable forecast. Please select a different stock.")
+    if len(scaled_data) < 80:
+        st.error("Not enough historical data to create a reliable forecast.")
         return None, None
         
     training_data_len = int(np.ceil(len(scaled_data) * .8))
@@ -149,8 +149,12 @@ def forecast_stock(data: pd.DataFrame):
     train = data[:training_data_len]
     valid = data[training_data_len:].copy()
 
-    # The critical fix is here: using .flatten()
-    valid['Predictions'] = predictions.flatten() 
+    # --- THE DEFINITIVE FIX ---
+    # Create a new pandas Series from the flattened predictions
+    # and explicitly give it the same date index as the validation set.
+    # This guarantees the data points align correctly for plotting.
+    preds_series = pd.Series(predictions.flatten(), index=valid.index)
+    valid['Predictions'] = preds_series
 
     return train, valid
 
@@ -159,7 +163,6 @@ def plot_forecast(train, valid):
     fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
     if valid is not None and not valid.empty:
         fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)', line=dict(color='orange')))
-        # Only plot predictions if the column exists and has data
         if 'Predictions' in valid.columns and valid['Predictions'].notna().any():
             fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices', line=dict(color='cyan', dash='dash')))
     fig.update_layout(
