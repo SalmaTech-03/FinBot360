@@ -104,13 +104,14 @@ def create_lstm_model(input_shape):
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
+# --- CORRECTED FUNCTION ---
 def forecast_stock(data: pd.DataFrame):
     scaled_data, scaler = preprocess_for_forecasting(data)
     if scaled_data is None: 
         return None, None
     
-    if len(scaled_data) < 61:
-        st.error("Not enough historical data to create a forecast. Please select a longer time range or a different stock.")
+    if len(scaled_data) < 80: # Increased minimum data length for reliability
+        st.error("Not enough historical data to create a reliable forecast. Please select a different stock.")
         return None, None
         
     training_data_len = int(np.ceil(len(scaled_data) * .8))
@@ -121,7 +122,7 @@ def forecast_stock(data: pd.DataFrame):
         y_train.append(scaled_data[i, 0])
 
     if not x_train:
-        st.error(f"Training data is too short for a 60-day lookback window. Found only {training_data_len} training points.")
+        st.error(f"Training data is too short for the 60-day lookback window.")
         return None, None
         
     x_train, y_train = np.array(x_train), np.array(y_train)
@@ -148,22 +149,19 @@ def forecast_stock(data: pd.DataFrame):
     train = data[:training_data_len]
     valid = data[training_data_len:].copy()
 
-    if len(predictions) == len(valid):
-        # Flatten the 2D predictions array into a 1D array for plotting
-        valid['Predictions'] = predictions.flatten() 
-    else:
-        valid['Predictions'] = np.nan
-        valid.iloc[:len(predictions), valid.columns.get_loc('Predictions')] = predictions.flatten()
-        st.warning(f"Forecast may be incomplete due to limited data for the validation period.")
+    # The critical fix is here: using .flatten()
+    valid['Predictions'] = predictions.flatten() 
 
     return train, valid
 
 def plot_forecast(train, valid):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
-    if valid is not None:
+    if valid is not None and not valid.empty:
         fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)', line=dict(color='orange')))
-        fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices', line=dict(color='cyan', dash='dash')))
+        # Only plot predictions if the column exists and has data
+        if 'Predictions' in valid.columns and valid['Predictions'].notna().any():
+            fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices', line=dict(color='cyan', dash='dash')))
     fig.update_layout(
         title='Stock Price Forecast vs. Actual',
         xaxis_title='Date',
@@ -179,15 +177,11 @@ with st.sidebar:
     st.title("📈 FinBot 360")
     st.markdown("---")
     st.subheader("API Status")
-    if GEMINI_AVAILABLE:
-        st.success("Gemini API: Connected", icon="✅")
-    else:
-        st.error("Gemini API: Disconnected", icon="❌")
+    if GEMINI_AVAILABLE: st.success("Gemini API: Connected", icon="✅")
+    else: st.error("Gemini API: Disconnected", icon="❌")
     try:
-        st.secrets["ALPHA_VANTAGE_API_KEY"]
-        st.success("Alpha Vantage: Connected", icon="✅")
-    except (KeyError, FileNotFoundError):
-        st.warning("Alpha Vantage: Not Found", icon="⚠️")
+        st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected", icon="✅")
+    except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found", icon="⚠️")
     st.info("To toggle Dark Mode, use the Settings menu (top right).")
     st.markdown("---")
 
@@ -208,36 +202,24 @@ with st.sidebar:
                 quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
 
                 st.subheader(f"{overview_data.loc['Name'][0]}")
-                st.metric(
-                    "Price",
-                    f"${float(quote_data['05. price'][0]):.2f}",
-                    f"{float(quote_data['09. change'][0]):.2f} ({quote_data['10. change percent'][0]})"
-                )
+                st.metric("Price", f"${float(quote_data['05. price'][0]):.2f}", f"{float(quote_data['09. change'][0]):.2f} ({quote_data['10. change percent'][0]})")
                 st.text(f"P/E Ratio: {overview_data.loc['PERatio'][0]}")
                 st.text(f"Market Cap: ${int(overview_data.loc['MarketCapitalization'][0]):,}")
-
         except Exception:
             try:
                 st.warning("⚠️ Alpha Vantage failed or limit reached. Showing Yahoo Finance data instead.")
                 ticker = yf.Ticker(ticker_symbol)
                 info = ticker.info
-
                 st.subheader(info.get("longName", ticker_symbol))
-                st.metric(
-                    "Price",
-                    f"${info.get('currentPrice', info.get('previousClose', 0))}",
-                    f"{info.get('regularMarketChange', 0):.2f} ({info.get('regularMarketChangePercent', 0):.2f}%)"
-                )
+                st.metric("Price", f"${info.get('currentPrice', info.get('previousClose', 0))}", f"{info.get('regularMarketChange', 0):.2f} ({info.get('regularMarketChangePercent', 0):.2f}%)")
                 st.text(f"P/E Ratio: {info.get('trailingPE', 'N/A')}")
                 st.text(f"Market Cap: ${info.get('marketCap', 'N/A'):,}" if info.get("marketCap") else "Market Cap: N/A")
-
             except Exception as e2:
                 st.error(f"Could not fetch data from either Alpha Vantage or yfinance. Error: {e2}")
 
         st.subheader("Live Financial News")
         feed = feedparser.parse("http://feeds.reuters.com/reuters/businessNews")
-        for entry in feed.entries[:3]: 
-            st.markdown(f"[{entry.title}]({entry.link})")
+        for entry in feed.entries[:3]: st.markdown(f"[{entry.title}]({entry.link})")
 
     # --- Tool 2: Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis"):
@@ -268,21 +250,15 @@ with st.sidebar:
     # --- Tool 4: Stock Forecasting ---
     with st.expander("📊 Stock Forecasting", expanded=True):
         ticker = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL", help="For non-US stocks, add exchange suffix (e.g., DMART.NS)").upper()
-
         if 'forecast_fig' not in st.session_state:
             st.session_state.forecast_fig = None
-
         if st.button("Generate Forecast"):
             st.session_state.forecast_fig = None
-            
             data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
             if not data.empty:
                 train, valid = forecast_stock(data)
                 if train is not None:
                     st.session_state.forecast_fig = plot_forecast(train, valid)
-                else:
-                    st.warning("Could not generate a forecast for the given data.")
-        
         if st.session_state.forecast_fig:
             st.plotly_chart(st.session_state.forecast_fig, use_container_width=True)
         else:
@@ -291,23 +267,18 @@ with st.sidebar:
 # =================================================================================
 # ✅ MAIN PAGE - CHATBOT INTERFACE
 # =================================================================================
-
 st.title("Natural Language Financial Q&A")
 st.markdown("Ask the AI assistant about financial topics, market trends, or definitions. Use the tools in the sidebar for specific analysis.")
 st.markdown("---")
-
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you with your financial questions today?"}]
-
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
-
 if prompt := st.chat_input("Ask a financial question..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             response = get_llm_response(prompt)
