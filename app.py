@@ -104,60 +104,76 @@ def create_lstm_model(input_shape):
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-# --- REWRITTEN AND SIMPLIFIED FUNCTION ---
+# --- FINAL, ROBUST, AND CORRECTED FUNCTION ---
 def forecast_stock(data: pd.DataFrame):
-    if len(data) < 80:
-        st.error("Not enough historical data to create a reliable forecast (need at least 80 data points).")
+    # 1. CRITICAL: Clean and validate the input data
+    data_close = data[['Close']].copy()
+    data_close.dropna(inplace=True) # Remove any rows with missing 'Close' values that cause the ValueError
+
+    if len(data_close) < 80:
+        st.error("Not enough valid data points to create a forecast (need at least 80 after cleaning).")
         return None, None
 
-    # 1. Prepare data
-    data_close = data.filter(['Close'])
+    # 2. Prepare data for scaling and training
     dataset = data_close.values
     training_data_len = int(np.ceil(len(dataset) * .8))
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(dataset)
     
-    # 2. Create training dataset
-    train_data = scaled_data[0:int(training_data_len), :]
+    # 3. Create the training dataset
+    train_data = scaled_data[0:training_data_len, :]
     x_train, y_train = [], []
     for i in range(60, len(train_data)):
         x_train.append(train_data[i-60:i, 0])
         y_train.append(train_data[i, 0])
+
+    if not x_train:
+        st.error("Training data is too short for the 60-day lookback window.")
+        return None, None
+        
     x_train, y_train = np.array(x_train), np.array(y_train)
     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
     
-    # 3. Build and train model
+    # 4. Build and train the LSTM model
     model = create_lstm_model((x_train.shape[1], 1))
     with st.spinner('Training LSTM model... This may take a moment.'):
         model.fit(x_train, y_train, batch_size=32, epochs=10, verbose=0)
         
-    # 4. Create testing dataset
+    # 5. Create the testing dataset
     test_data = scaled_data[training_data_len - 60:, :]
     x_test = []
-    y_test = dataset[training_data_len:, :]
     for i in range(60, len(test_data)):
         x_test.append(test_data[i-60:i, 0])
+
+    if not x_test:
+        st.warning("Not enough data to form a validation set. Only historical data will be shown.")
+        return data_close[:training_data_len], None
+
     x_test = np.array(x_test)
     x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
     
-    # 5. Get predictions
+    # 6. Get predictions and format for plotting
     predictions = model.predict(x_test)
     predictions = scaler.inverse_transform(predictions)
     
-    # 6. Prepare dataframes for plotting
-    train = data_close[:training_data_len]
-    valid = data_close[training_data_len:]
-    valid['Predictions'] = predictions
+    # 7. Prepare final DataFrames for plotting
+    train_df = data_close[:training_data_len]
+    valid_df = data_close[training_data_len:]
+    valid_df['Predictions'] = predictions
     
-    return train, valid
+    return train_df, valid_df
 
 def plot_forecast(train, valid):
     fig = go.Figure()
+    # Plot training data (historical)
     fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
+    
+    # Plot validation data (actual vs predicted)
     if valid is not None and not valid.empty:
         fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)', line=dict(color='orange')))
         if 'Predictions' in valid.columns and valid['Predictions'].notna().any():
             fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices', line=dict(color='cyan', dash='dash')))
+            
     fig.update_layout(
         title='Stock Price Forecast vs. Actual',
         xaxis_title='Date',
@@ -171,6 +187,7 @@ def plot_forecast(train, valid):
 # =================================================================================
 with st.sidebar:
     st.title("📈 FinBot 360")
+    # ... (rest of your sidebar code is fine, no changes needed)
     st.markdown("---")
     st.subheader("API Status")
     if GEMINI_AVAILABLE: st.success("Gemini API: Connected", icon="✅")
@@ -204,7 +221,7 @@ with st.sidebar:
         except Exception:
             try:
                 st.warning("⚠️ Alpha Vantage failed or limit reached. Showing Yahoo Finance data instead.")
-                ticker = yf.Ticker(ticker_.replace(".", "-")) # YFinance uses dashes for some tickers
+                ticker = yf.Ticker(ticker_symbol)
                 info = ticker.info
                 st.subheader(info.get("longName", ticker_symbol))
                 st.metric("Price", f"${info.get('currentPrice', info.get('previousClose', 0))}", f"{info.get('regularMarketChange', 0):.2f} ({info.get('regularMarketChangePercent', 0):.2f}%)")
@@ -252,24 +269,25 @@ with st.sidebar:
             st.session_state.forecast_fig = None
             data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
             if not data.empty:
-                with st.spinner("Processing forecast..."):
-                    train, valid = forecast_stock(data)
-                    if train is not None:
-                        st.session_state.forecast_fig = plot_forecast(train, valid)
+                train, valid = forecast_stock(data)
+                if train is not None:
+                    st.session_state.forecast_fig = plot_forecast(train, valid)
         
         if st.session_state.forecast_fig:
             st.plotly_chart(st.session_state.forecast_fig, use_container_width=True)
         else:
             st.info("Enter a ticker and click 'Generate Forecast' to see the stock price prediction.")
 
+
 # =================================================================================
 # ✅ MAIN PAGE - CHATBOT INTERFACE
 # =================================================================================
 st.title("Natural Language Financial Q&A")
+# ... (rest of your main page code is fine, no changes needed)
 st.markdown("Ask the AI assistant about financial topics, market trends, or definitions. Use the tools in the sidebar for specific analysis.")
 st.markdown("---")
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you with your financial questions today?"}]
+    st.session_state.messages = [{"role": "assistant", content: "Hello! How can I help you with your financial questions today?"}]
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
