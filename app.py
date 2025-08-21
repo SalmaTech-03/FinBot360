@@ -86,7 +86,6 @@ def forecast_stock(data: pd.DataFrame):
     if len(data_close) < 80:
         st.error("Not enough valid data points to forecast (need at least 80).")
         return None, None
-
     dataset = data_close.values
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(dataset)
@@ -128,13 +127,15 @@ def forecast_stock(data: pd.DataFrame):
     predictions = model.predict(x_test)
     predictions = scaler.inverse_transform(predictions)
 
-    # 6. --- THE DEFINITIVE FIX: Construct the final dataframes ---
-    train_df = data_close[:training_data_len]
+    # 6. --- THE DEFINITIVE FIX: Manually construct the final dataframes ---
+    train_df = data_close.iloc[:training_data_len]
     
-    # Create the validation dataframe with the correct dates
+    # Get the dates that correspond to the predictions
     validation_dates = data_close.index[training_data_len:]
+    
+    # Create the validation dataframe from scratch to ensure perfect alignment
     valid_df = pd.DataFrame(index=validation_dates)
-    valid_df['Close'] = data_close['Close'][training_data_len:]
+    valid_df['Close'] = data_close.values[training_data_len:]
     valid_df['Predictions'] = predictions
     
     return train_df, valid_df
@@ -224,7 +225,7 @@ with st.sidebar:
             st.session_state.forecast_fig = None
         if st.button("Generate Forecast"):
             st.session_state.forecast_fig = None
-            data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
+            data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-m-%d'))
             if not data.empty:
                 train, valid = forecast_stock(data)
                 if train is not None:
