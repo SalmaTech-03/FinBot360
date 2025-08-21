@@ -84,7 +84,13 @@ def plot_portfolio_performance(df: pd.DataFrame, cumulative_returns: pd.Series):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Portfolio Price'))
     fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns, mode='lines', name='Cumulative Returns', yaxis='y2'))
-    fig.update_layout(title='Portfolio Price and Cumulative Returns', xaxis_title='Date', yaxis_title='Portfolio Price ($)', yaxis2=dict(title='Cumulative Returns (%)', overlaying='y', side='right', showgrid=False), legend=dict(x=0.01, y=0.99))
+    fig.update_layout(
+        title='Portfolio Price and Cumulative Returns',
+        xaxis_title='Date',
+        yaxis_title='Portfolio Price ($)',
+        yaxis2=dict(title='Cumulative Returns (%)', overlaying='y', side='right', showgrid=False),
+        legend=dict(x=0.01, y=0.99)
+    )
     return fig
 
 def create_lstm_model(input_shape):
@@ -100,7 +106,8 @@ def create_lstm_model(input_shape):
 
 def forecast_stock(data: pd.DataFrame):
     scaled_data, scaler = preprocess_for_forecasting(data)
-    if scaled_data is None: return None, None
+    if scaled_data is None: 
+        return None, None
     training_data_len = int(np.ceil(len(scaled_data) * .8))
     x_train, y_train = [], []
     for i in range(60, len(scaled_data[:training_data_len])):
@@ -118,7 +125,9 @@ def forecast_stock(data: pd.DataFrame):
     x_test = np.array(x_test)
     x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
     predictions = scaler.inverse_transform(model.predict(x_test))
-    train = data[:training_data_len]; valid = data[training_data_len:].copy(); valid['Predictions'] = predictions
+    train = data[:training_data_len]
+    valid = data[training_data_len:].copy()
+    valid['Predictions'] = predictions
     return train, valid
 
 def plot_forecast(train, valid):
@@ -126,7 +135,12 @@ def plot_forecast(train, valid):
     fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
     fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)', line=dict(color='orange')))
     fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices', line=dict(color='cyan', dash='dash')))
-    fig.update_layout(title='Stock Price Forecast vs. Actual', xaxis_title='Date', yaxis_title='Stock Price ($)', legend=dict(x=0.01, y=0.99))
+    fig.update_layout(
+        title='Stock Price Forecast vs. Actual',
+        xaxis_title='Date',
+        yaxis_title='Stock Price ($)',
+        legend=dict(x=0.01, y=0.99)
+    )
     return fig
 
 # =================================================================================
@@ -136,11 +150,15 @@ with st.sidebar:
     st.title("📈 FinBot 360")
     st.markdown("---")
     st.subheader("API Status")
-    if GEMINI_AVAILABLE: st.success("Gemini API: Connected", icon="✅")
-    else: st.error("Gemini API: Disconnected", icon="❌")
+    if GEMINI_AVAILABLE:
+        st.success("Gemini API: Connected", icon="✅")
+    else:
+        st.error("Gemini API: Disconnected", icon="❌")
     try:
-        st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected", icon="✅")
-    except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found", icon="⚠️")
+        st.secrets["ALPHA_VANTAGE_API_KEY"]
+        st.success("Alpha Vantage: Connected", icon="✅")
+    except (KeyError, FileNotFoundError):
+        st.warning("Alpha Vantage: Not Found", icon="⚠️")
     st.info("To toggle Dark Mode, use the Settings menu (top right).")
     st.markdown("---")
 
@@ -196,14 +214,22 @@ with st.sidebar:
 
     # --- Tool 2: Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis"):
-        user_text = st.text_area("Enter text to analyze:", "Apple's stock soared after their strong quarterly earnings report.", height=100)
+        user_text = st.text_area(
+            "Enter text to analyze:",
+            "Apple's stock soared after their strong quarterly earnings report.",
+            height=100
+        )
         if st.button("Analyze Sentiment"):
             with st.spinner("Analyzing..."):
                 result = analyze_sentiment(user_text)
-                sentiment = result['label'].upper(); score = result['score']
-                if sentiment == 'POSITIVE': st.success(f"Sentiment: {sentiment} (Score: {score:.2f})")
-                elif sentiment == 'NEGATIVE': st.error(f"Sentiment: {sentiment} (Score: {score:.2f})")
-                else: st.info(f"Sentiment: {sentiment} (Score: {score:.2f})")
+                sentiment = result['label'].upper()
+                score = result['score']
+                if sentiment == 'POSITIVE':
+                    st.success(f"Sentiment: {sentiment} (Score: {score:.2f})")
+                elif sentiment == 'NEGATIVE':
+                    st.error(f"Sentiment: {sentiment} (Score: {score:.2f})")
+                else:
+                    st.info(f"Sentiment: {sentiment} (Score: {score:.2f})")
 
     # --- Tool 3: Portfolio Analysis ---
     with st.expander("📁 Portfolio Performance Analysis"):
@@ -212,24 +238,42 @@ with st.sidebar:
             try:
                 df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
                 if 'Date' in df.columns and 'Close' in df.columns:
-                    df['Date'] = pd.to_datetime(df['Date']); df = df.set_index('Date')
+                    df['Date'] = pd.to_datetime(df['Date'])
+                    df = df.set_index('Date')
                     _, cum_returns, volatility, sharpe = analyze_portfolio(df)
                     st.metric("Total Return", f"{cum_returns.iloc[-1]:.2%}")
                     st.metric("Annualized Volatility", f"{volatility:.2%}")
                     st.metric("Sharpe Ratio", f"{sharpe:.2f}")
-                else: st.error("File must contain 'Date' and 'Close' columns.")
-            except Exception as e: st.error(f"Error processing file: {e}")
+                else:
+                    st.error("File must contain 'Date' and 'Close' columns.")
+            except Exception as e:
+                st.error(f"Error processing file: {e}")
 
     # --- Tool 4: Stock Forecasting ---
-    with st.expander("📊 Stock Forecasting"):
-        ticker = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL").upper()
+    with st.expander("📊 Stock Forecasting", expanded=True):  # open by default
+        ticker = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL", help="For non-US stocks, add exchange suffix (e.g., DMART.NS)").upper()
+
+        # Initialize session state to hold the chart figure
+        if 'forecast_fig' not in st.session_state:
+            st.session_state.forecast_fig = None
+
         if st.button("Generate Forecast"):
+            # Clear the previous figure before generating a new one
+            st.session_state.forecast_fig = None
+            
             data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
             if not data.empty:
                 train, valid = forecast_stock(data)
-                if train is not None:
-                    fig = plot_forecast(train, valid)
-                    st.plotly_chart(fig, use_container_width=True)
+                if train is not None and valid is not None:
+                    st.session_state.forecast_fig = plot_forecast(train, valid)
+                else:
+                    st.warning("Could not generate a forecast for the given data.")
+
+        # --- Display Area ---
+        if st.session_state.forecast_fig:
+            st.plotly_chart(st.session_state.forecast_fig, use_container_width=True)
+        else:
+            st.info("Enter a ticker and click 'Generate Forecast' to see the stock price prediction.")
 
 # =================================================================================
 # ✅ MAIN PAGE - CHATBOT INTERFACE
@@ -241,7 +285,9 @@ st.markdown("---")
 
 # Initialize chat history
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you with your financial questions today?"}]
+    st.session_state.messages = [
+        {"role": "assistant", "content": "Hello! How can I help you with your financial questions today?"}
+    ]
 
 # Display chat messages from history
 for message in st.session_state.messages:
@@ -252,7 +298,6 @@ for message in st.session_state.messages:
 if prompt := st.chat_input("Ask a financial question..."):
     # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
-    # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
 
