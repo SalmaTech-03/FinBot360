@@ -10,7 +10,7 @@ curl-cffi
 # Machine Learning
 tensorflow>=2.15.0,<2.16
 torch==2.1.0
-safetensors==0.4.2
+safensors==0.4.2
 transformers[sentencepiece]
 
 # API Libraries
