@@ -7,7 +7,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from sklearn.preprocessing import MinMaxScaler
 from transformers import pipeline
-import google.generativeai as genai
+import google.genergenerativeai as genai
 import logging
 from io import StringIO
 
@@ -60,7 +60,7 @@ def analyze_sentiment(text: str):
 @st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     data = yf.download(ticker, start=start_date, end=end_date)
-    data.dropna(inplace=True) # Ensure no missing values
+    data.dropna(inplace=True)
     if data.empty:
         st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
         return pd.DataFrame()
@@ -121,19 +121,26 @@ def forecast_stock(data: pd.DataFrame):
     predictions = model.predict(x_test)
     predictions = scaler.inverse_transform(predictions)
     
-    # 6. --- THE DEFINITIVE FIX: Manually build the validation dataframe ---
-    train_df = data_close[:training_data_len]
+    # 6. --- THE DEFINITIVE FIX: Manually construct the final dataframes ---
+    train_df = data_close.iloc[:training_data_len]
     
-    # Get the dates from the original dataframe that correspond to the prediction period
+    # Get the dates and actual prices for the validation period
     validation_dates = data_close.index[training_data_len:]
-    
-    # Create the validation dataframe from scratch to ensure perfect alignment
-    valid_df = pd.DataFrame(index=validation_dates)
-    valid_df['Close'] = data_close['Close'].iloc[training_data_len:]
-    valid_df['Predictions'] = predictions
+    actual_prices = data_close.values[training_data_len:]
+
+    # Handle any potential length mismatch due to the 60-day window
+    # This ensures the predictions align perfectly with the dates
+    if len(predictions) < len(validation_dates):
+        validation_dates = validation_dates[-len(predictions):]
+        actual_prices = actual_prices[-len(predictions):]
+
+    # Create the validation dataframe from scratch to guarantee perfect alignment
+    valid_df = pd.DataFrame({
+        'Close': actual_prices.flatten(),
+        'Predictions': predictions.flatten()
+    }, index=validation_dates)
     
     return train_df, valid_df
-
 
 def plot_forecast(train, valid):
     fig = go.Figure()
@@ -149,53 +156,58 @@ def plot_forecast(train, valid):
 # ✅ SIDEBAR AND MAIN PAGE
 # =================================================================================
 with st.sidebar:
-    st.title("📈 FinBot 360")
+    st.image("path/to/your/logo.png", width=50) # Optional: Add a logo
+    st.title("FinBot 360")
+    st.markdown("Your AI-Powered Financial Co-pilot")
     st.markdown("---")
-    st.header("Financial Tools")
+    
+    with st.expander("API Status", expanded=True):
+        if GEMINI_AVAILABLE: st.success("Gemini API: Connected")
+        else: st.error("Gemini API: Disconnected")
+        try:
+            st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected")
+        except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Connected")
+    st.markdown("---")
 
-    # To prevent UI conflicts, we will use unique keys for text inputs
-    with st.expander("🔴 Live Market Dashboard"):
+st.header("Financial Tools")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    with st.container(border=True):
+        st.subheader("🔴 Live Market Dashboard")
         ticker_live = st.text_input("Enter a Stock Ticker:", "IBM", key="live_ticker").upper()
-        # Your live dashboard code here...
+        if st.button("Get Live Data", key="live_button"):
+            # Your live data logic here...
+            st.success(f"Data for {ticker_live} would be shown here.")
 
-    with st.expander("😊 Financial Sentiment Analysis"):
+    with st.container(border=True):
+        st.subheader("😊 Financial Sentiment Analysis")
         user_text = st.text_area("Enter text to analyze:", "Apple's stock soared...", key="sentiment_text")
-        # Your sentiment analysis code here...
-
-    with st.expander("📁 Portfolio Performance Analysis"):
+        if st.button("Analyze Sentiment", key="sentiment_button"):
+            with st.spinner("Analyzing..."):
+                result = analyze_sentiment(user_text)
+                # Display results...
+                st.write(result)
+    
+    with st.container(border=True):
+        st.subheader("📁 Portfolio Performance Analysis")
         uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'], key="portfolio_uploader")
-        # Your portfolio analysis code here...
+        if uploaded_file:
+            # Your portfolio analysis logic here...
+            st.success("Portfolio would be analyzed here.")
 
-    # STOCK FORECASTING MOVED TO MAIN AREA TO SIMPLIFY LAYOUT
-    # ...
+with col2:
+    with st.container(border=True):
+        st.header("📊 Stock Forecasting")
+        ticker_main = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL", key="main_ticker").upper()
+        if st.button("Generate Forecast", key="forecast_button"):
+            data_main = fetch_stock_data(ticker_main, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
+            if not data_main.empty:
+                train, valid = forecast_stock(data_main)
+                if train is not None:
+                    fig = plot_forecast(train, valid)
+                    st.plotly_chart(fig, use_container_width=True)
 
-st.title("Natural Language Financial Q&A")
-st.markdown("Ask the AI assistant about financial topics, market trends, or definitions.")
-st.markdown("---")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you with your financial questions today?"}]
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-if prompt := st.chat_input("Ask a financial question..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"): st.markdown(prompt)
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = get_llm_response(prompt)
-            st.markdown(response)
-    st.session_state.messages.append({"role": "assistant", "content": response})
-
-# --- STOCK FORECASTING IN MAIN PAGE FOR STABILITY ---
-st.markdown("---")
-st.header("📊 Stock Forecasting")
-ticker_main = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL", key="main_ticker").upper()
-if st.button("Generate Forecast"):
-    data_main = fetch_stock_data(ticker_main, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
-    if not data_main.empty:
-        train, valid = forecast_stock(data_main)
-        if train is not None:
-            fig = plot_forecast(train, valid)
-            st.plotly_chart(fig, use_container_width=True)
+# Chatbot Interface can go here or in a separate tab if preferred
+# ...
