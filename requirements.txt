@@ -7,6 +7,7 @@ plotly
 scikit-learn
 
 # --- STABLE AI/ML CONFIGURATION ---
+# Pinning specific versions known to be compatible on Streamlit Cloud
 tensorflow==2.15.0
 transformers==4.38.2
 torch==2.1.0
