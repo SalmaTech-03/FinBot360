@@ -10,6 +10,7 @@ from transformers import pipeline
 import google.generativeai as genai
 import logging
 from io import StringIO
+import requests # <-- Import the requests library
 
 # --- Imports for the Sidebar Tools ---
 from streamlit_autorefresh import st_autorefresh
@@ -58,13 +59,23 @@ def load_sentiment_model():
 def analyze_sentiment(text: str):
     return load_sentiment_model()(text)[0]
 
+# --- REWRITTEN AND ROBUST `fetch_stock_data` FUNCTION ---
 @st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    data = yf.download(ticker, start=start_date, end=end_date)
-    if data.empty:
-        st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
+    # Use a session with a browser user-agent to avoid being blocked by Yahoo Finance
+    session = requests.Session()
+    session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    
+    try:
+        data = yf.download(ticker, start=start_date, end=end_date, session=session)
+        if data.empty:
+            st.error(f"No data found for ticker '{ticker}'. The symbol may be incorrect or delisted.", icon="❌")
+            return pd.DataFrame()
+        return data
+    except Exception as e:
+        st.error(f"Failed to download data for '{ticker}'. The API may be temporarily unavailable. Error: {e}", icon="🚨")
         return pd.DataFrame()
-    return data
+
 
 def create_lstm_model(input_shape):
     model = Sequential([
@@ -78,9 +89,7 @@ def create_lstm_model(input_shape):
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-# --- FINAL, ROBUST, AND CORRECTED FORECAST FUNCTION ---
 def forecast_stock(data: pd.DataFrame):
-    # 1. Prepare and clean data
     data_close = data[['Close']].copy()
     data_close.dropna(inplace=True)
     if len(data_close) < 80:
@@ -90,7 +99,6 @@ def forecast_stock(data: pd.DataFrame):
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(dataset)
 
-    # 2. Create training data
     training_data_len = int(np.ceil(len(dataset) * 0.8))
     train_data = scaled_data[0:training_data_len]
     x_train, y_train = [], []
@@ -105,12 +113,10 @@ def forecast_stock(data: pd.DataFrame):
     x_train, y_train = np.array(x_train), np.array(y_train)
     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
 
-    # 3. Train model
     model = create_lstm_model((x_train.shape[1], 1))
     with st.spinner('Training LSTM model... This may take a moment.'):
         model.fit(x_train, y_train, batch_size=32, epochs=10, verbose=0)
 
-    # 4. Create test data
     test_data = scaled_data[training_data_len - 60:, :]
     x_test = []
     for i in range(60, len(test_data)):
@@ -123,17 +129,11 @@ def forecast_stock(data: pd.DataFrame):
     x_test = np.array(x_test)
     x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
 
-    # 5. Get predictions
     predictions = model.predict(x_test)
     predictions = scaler.inverse_transform(predictions)
 
-    # 6. --- THE DEFINITIVE FIX: Manually construct the final dataframes ---
     train_df = data_close.iloc[:training_data_len]
-    
-    # Get the dates that correspond to the predictions
     validation_dates = data_close.index[training_data_len:]
-    
-    # Create the validation dataframe from scratch to ensure perfect alignment
     valid_df = pd.DataFrame(index=validation_dates)
     valid_df['Close'] = data_close.values[training_data_len:]
     valid_df['Predictions'] = predictions
@@ -156,6 +156,7 @@ def plot_forecast(train, valid):
 with st.sidebar:
     st.title("📈 FinBot 360")
     st.markdown("---")
+    # ... Rest of your code is unchanged and correct ...
     st.subheader("API Status")
     if GEMINI_AVAILABLE: st.success("Gemini API: Connected", icon="✅")
     else: st.error("Gemini API: Disconnected", icon="❌")
@@ -225,7 +226,7 @@ with st.sidebar:
             st.session_state.forecast_fig = None
         if st.button("Generate Forecast"):
             st.session_state.forecast_fig = None
-            data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-m-%d'))
+            data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
             if not data.empty:
                 train, valid = forecast_stock(data)
                 if train is not None:
