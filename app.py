@@ -38,7 +38,7 @@ except (KeyError, FileNotFoundError):
     GEMINI_AVAILABLE = False
 
 # =================================================================================
-# ALL HELPER FUNCTIONS (Your Original, Working Code)
+# ALL HELPER FUNCTIONS (No changes needed here)
 # =================================================================================
 def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -> str:
     if not GEMINI_AVAILABLE: return "Chatbot is unavailable because the Gemini API key is not configured."
@@ -59,7 +59,6 @@ def analyze_sentiment(text: str):
 
 @st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    # --- Reverted to the simple, standard yfinance call ---
     data = yf.download(ticker, start=start_date, end=end_date)
     if data.empty:
         st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
@@ -130,7 +129,7 @@ def plot_forecast(train, valid):
     return fig
 
 # =================================================================================
-# ✅ SIDEBAR AND MAIN PAGE (Your Original Code)
+# ✅ SIDEBAR - TOOLS & CONTROLS
 # =================================================================================
 with st.sidebar:
     st.title("📈 FinBot 360")
@@ -143,8 +142,10 @@ with st.sidebar:
     except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found", icon="⚠️")
     st.info("To toggle Dark Mode, use the Settings menu (top right).")
     st.markdown("---")
+
     st.header("Financial Tools")
 
+    # --- Tool 1: Live Dashboard ---
     with st.expander("🔴 Live Market Dashboard"):
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         st.markdown("Data from Alpha Vantage & Reuters.")
@@ -166,6 +167,7 @@ with st.sidebar:
         feed = feedparser.parse("http://feeds.reuters.com/reuters/businessNews")
         for entry in feed.entries[:3]: st.markdown(f"[{entry.title}]({entry.link})")
 
+    # --- Tool 2: Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis"):
         user_text = st.text_area("Enter text to analyze:", "Apple's stock soared after their strong quarterly earnings report.", height=100)
         if st.button("Analyze Sentiment"):
@@ -176,6 +178,7 @@ with st.sidebar:
                 elif sentiment == 'NEGATIVE': st.error(f"Sentiment: {sentiment} (Score: {score:.2f})")
                 else: st.info(f"Sentiment: {sentiment} (Score: {score:.2f})")
 
+    # --- Tool 3: Portfolio Analysis ---
     with st.expander("📁 Portfolio Performance Analysis"):
         uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'])
         if uploaded_file:
@@ -190,6 +193,7 @@ with st.sidebar:
                 else: st.error("File must contain 'Date' and 'Close' columns.")
             except Exception as e: st.error(f"Error processing file: {e}")
 
+    # --- Tool 4: Stock Forecasting ---
     with st.expander("📊 Stock Forecasting"):
         ticker = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL").upper()
         if st.button("Generate Forecast"):
@@ -200,22 +204,35 @@ with st.sidebar:
                     fig = plot_forecast(train, valid)
                     st.plotly_chart(fig, use_container_width=True)
 
+# =================================================================================
+# ✅ MAIN PAGE - CHATBOT INTERFACE
+# =================================================================================
+
 st.title("Natural Language Financial Q&A")
 st.markdown("Ask the AI assistant about financial topics, market trends, or definitions. Use the tools in the sidebar for specific analysis.")
 st.markdown("---")
 
+# Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you with your financial questions today?"}]
+
+# Display chat messages from history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
+# Accept user input
 if prompt := st.chat_input("Ask a financial question..."):
+    # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
+    # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
+
+    # Get and display assistant response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             response = get_llm_response(prompt)
             st.markdown(response)
+    # Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": response})
