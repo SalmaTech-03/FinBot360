@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import plotly.graph_objects as go
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from sklearn.preprocessing import MinMaxScaler
@@ -10,6 +9,7 @@ from transformers import pipeline
 import google.generativeai as genai
 import logging
 from io import StringIO
+from curl_cffi import requests as curl_requests # <-- Add this crucial import
 
 # --- Imports for the Sidebar Tools ---
 from streamlit_autorefresh import st_autorefresh
@@ -41,6 +41,7 @@ except (KeyError, FileNotFoundError):
 # ALL HELPER FUNCTIONS
 # =================================================================================
 def get_llm_response(prompt: str, model_name: str = "gemini-2.5-pro") -> str:
+    # ... (this function is correct, no changes needed)
     if not GEMINI_AVAILABLE:
         return "Chatbot is unavailable because the Gemini API key is not configured."
     try:
@@ -53,27 +54,33 @@ def get_llm_response(prompt: str, model_name: str = "gemini-2.5-pro") -> str:
 
 @st.cache_resource
 def load_sentiment_model():
+    # ... (this function is correct, no changes needed)
     return pipeline("sentiment-analysis", model="ProsusAI/finbert")
 
 def analyze_sentiment(text: str):
+    # ... (this function is correct, no changes needed)
     return load_sentiment_model()(text)[0]
 
-# --- SIMPLIFIED AND CORRECTED `fetch_stock_data` FUNCTION ---
+# --- REWRITTEN `fetch_stock_data` WITH MANUAL BROWSER SESSION ---
 @st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    # Manually create the specific curl_cffi session required by the new yfinance
+    session = curl_requests.Session(impersonate="chrome110")
+    
     try:
-        # Let yfinance handle the session automatically
-        data = yf.download(ticker, start=start_date, end=end_date)
+        # Force yfinance to use our robust, browser-like session
+        data = yf.download(ticker, start=start_date, end=end_date, session=session)
         if data.empty:
             st.error(f"No data found for ticker '{ticker}'. The symbol may be incorrect or delisted.", icon="❌")
             return pd.DataFrame()
         return data
     except Exception as e:
-        st.error(f"Failed to download data for '{ticker}'. The API may be temporarily unavailable. Error: {e}", icon="🚨")
+        st.error(f"Failed to download data for '{ticker}'. Error: {e}", icon="🚨")
         return pd.DataFrame()
 
 
 def create_lstm_model(input_shape):
+    # ... (this function is correct, no changes needed)
     model = Sequential([
         LSTM(50, return_sequences=True, input_shape=input_shape),
         Dropout(0.2),
@@ -86,6 +93,7 @@ def create_lstm_model(input_shape):
     return model
 
 def forecast_stock(data: pd.DataFrame):
+    # ... (this function is correct, no changes needed)
     data_close = data[['Close']].copy()
     data_close.dropna(inplace=True)
     if len(data_close) < 80:
@@ -137,6 +145,7 @@ def forecast_stock(data: pd.DataFrame):
     return train_df, valid_df
 
 def plot_forecast(train, valid):
+    # ... (this function is correct, no changes needed)
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
     if valid is not None and not valid.empty:
@@ -150,7 +159,7 @@ def plot_forecast(train, valid):
 # ✅ SIDEBAR AND MAIN PAGE (No changes below this line)
 # =================================================================================
 with st.sidebar:
-    st.title("📈 FinBot 360")
+    st.title("📈 FinBot 30")
     # ... Rest of your code is unchanged and correct ...
     st.markdown("---")
     st.subheader("API Status")
@@ -222,7 +231,7 @@ with st.sidebar:
             st.session_state.forecast_fig = None
         if st.button("Generate Forecast"):
             st.session_state.forecast_fig = None
-            data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-m-%d'))
+            data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
             if not data.empty:
                 train, valid = forecast_stock(data)
                 if train is not None:
