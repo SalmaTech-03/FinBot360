@@ -13,7 +13,7 @@ from io import StringIO
 
 # --- Imports for the Sidebar Tools ---
 from streamlit_autorefresh import st_autorefresh
-import feedparser
+import feedparser # We still need this for the news
 from alpha_vantage.fundamentaldata import FundamentalData
 from alpha_vantage.timeseries import TimeSeries
 
@@ -53,34 +53,28 @@ def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -
 
 @st.cache_resource
 def load_sentiment_model():
-    # ... (This function is correct, no changes)
     return pipeline("sentiment-analysis", model="ProsusAI/finbert")
 
 def analyze_sentiment(text: str):
-    # ... (This function is correct, no changes)
     return load_sentiment_model()(text)[0]
 
-# --- CORRECTED FUNCTION TO PREVENT 'title' KEYERROR ---
-@st.cache_data(ttl=1800)
+# --- NEW FUNCTION TO GET NEWS AND AVERAGE SENTIMENT ---
+@st.cache_data(ttl=1800) # Cache for 30 minutes
 def get_news_and_sentiment(ticker: str):
+    # Use Yahoo Finance's news API
     stock = yf.Ticker(ticker)
     news = stock.news
+    
     if not news:
         return "No News Found", "neutral", []
 
     sentiments = []
     headlines = []
-    for item in news[:8]:
-        # --- THE DEFINITIVE FIX IS HERE ---
-        # Safely get the 'title'. If it doesn't exist, it becomes None.
-        headline = item.get('title')
-        
-        # If there's no headline, skip this item completely.
-        if not headline:
-            continue
-            
+    for item in news[:8]: # Analyze the top 8 headlines
+        headline = item['title']
         headlines.append(headline)
         result = analyze_sentiment(headline)
+        # Weight positive scores as 1, negative as -1, neutral as 0
         if result['label'] == 'positive':
             sentiments.append(result['score'])
         elif result['label'] == 'negative':
@@ -91,7 +85,10 @@ def get_news_and_sentiment(ticker: str):
     if not sentiments:
         return "No Score", "neutral", headlines
 
+    # Calculate average sentiment score
     avg_score = sum(sentiments) / len(sentiments)
+
+    # Determine overall sentiment label and color
     if avg_score > 0.3:
         overall_sentiment = "Positive"
         color = "green"
@@ -101,6 +98,7 @@ def get_news_and_sentiment(ticker: str):
     else:
         overall_sentiment = "Neutral"
         color = "orange"
+        
     return overall_sentiment, color, headlines
 
 
@@ -183,7 +181,7 @@ def plot_forecast(train, valid):
     return fig
 
 # =================================================================================
-# ✅ SIDEBAR - TOOLS & CONTROLS (The rest of the app is fine)
+# ✅ SIDEBAR - TOOLS & CONTROLS
 # =================================================================================
 with st.sidebar:
     st.title("📈 FinBot 360")
@@ -204,6 +202,7 @@ with st.sidebar:
         st_autorefresh(interval=300 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter a Stock Ticker:", "AAPL").upper()
         
+        # Display Live Price
         try:
             AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
             if ticker_symbol:
@@ -217,18 +216,22 @@ with st.sidebar:
         except Exception:
             st.error("Could not fetch live price. API limit may have been reached.")
             
-        st.markdown("---") 
+        st.markdown("---") # Visual separator
 
+        # --- NEW: Automated News Sentiment Section ---
         st.subheader("Automated News Sentiment")
         if ticker_symbol:
             with st.spinner(f"Fetching and analyzing news for {ticker_symbol}..."):
                 sentiment, color, headlines = get_news_and_sentiment(ticker_symbol)
+                
+                # Create two columns for a cleaner layout
                 col1, col2 = st.columns(2)
                 with col1:
                     st.markdown(f"**Overall Sentiment:**")
                 with col2:
                     st.markdown(f"**<p style='color:{color};'>{sentiment}</p>**", unsafe_allow_html=True)
                 
+                # Display the analyzed headlines
                 with st.popover("See Analyzed Headlines"):
                     if headlines:
                         for h in headlines:
@@ -236,6 +239,7 @@ with st.sidebar:
                     else:
                         st.write("No headlines found.")
 
+    # --- Tool 2: Financial Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis"):
         user_text = st.text_area("Enter text to analyze:", "Apple's stock soared after their strong quarterly earnings report.", height=100)
         if st.button("Analyze Sentiment"):
@@ -246,7 +250,9 @@ with st.sidebar:
                 elif sentiment == 'NEGATIVE': st.error(f"Sentiment: {sentiment} (Score: {score:.2f})")
                 else: st.info(f"Sentiment: {sentiment} (Score: {score:.2f})")
 
+    # --- Tool 3: Portfolio Analysis ---
     with st.expander("📁 Portfolio Performance Analysis"):
+        # ... (This section is correct, no changes)
         uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'])
         if uploaded_file:
             try:
@@ -260,7 +266,9 @@ with st.sidebar:
                 else: st.error("File must contain 'Date' and 'Close' columns.")
             except Exception as e: st.error(f"Error processing file: {e}")
 
+    # --- Tool 4: Stock Forecasting ---
     with st.expander("📊 Stock Forecasting"):
+        # ... (This section is correct, no changes)
         ticker = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL", key="forecast_ticker").upper()
         if st.button("Generate Forecast"):
             data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
@@ -274,6 +282,7 @@ with st.sidebar:
 # ✅ MAIN PAGE - CHATBOT INTERFACE
 # =================================================================================
 st.title("Natural Language Financial Q&A")
+# ... (This section is correct, no changes)
 st.markdown("Ask the AI assistant about financial topics, market trends, or definitions. Use the tools in the sidebar for specific analysis.")
 st.markdown("---")
 if "messages" not in st.session_state:
