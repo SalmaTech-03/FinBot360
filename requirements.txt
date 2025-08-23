@@ -10,7 +10,7 @@ scikit-learn
 tensorflow
 torch
 safetensors
-transformers[sentencepiece]
+transformers
 
 # API Libraries
 google-generativeai
