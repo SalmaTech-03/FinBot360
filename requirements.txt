@@ -1,4 +1,3 @@
-
 # Core App & Data Handling
 streamlit
 pandas
@@ -6,20 +5,19 @@ numpy
 yfinance
 plotly
 scikit-learn
+curl-cffi
 
-# --- Stable Machine Learning Configuration ---
+# Machine Learning
 tensorflow>=2.15.0,<2.16
-
-# Transformers with a key dependency, and a specific PyTorch version
 torch==2.1.0
 safetensors==0.4.2
 transformers[sentencepiece]
 
-# --- API Libraries ---
+# API Libraries
 google-generativeai
 alpha-vantage
 feedparser
 streamlit-autorefresh
 
-# Optional fallback library
+# Optional
 openai

@@ -10,7 +10,6 @@ from transformers import pipeline
 import google.generativeai as genai
 import logging
 from io import StringIO
-import requests # <-- Import the requests library
 
 # --- Imports for the Sidebar Tools ---
 from streamlit_autorefresh import st_autorefresh
@@ -41,7 +40,7 @@ except (KeyError, FileNotFoundError):
 # =================================================================================
 # ALL HELPER FUNCTIONS
 # =================================================================================
-def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash") -> str:
+def get_llm_response(prompt: str, model_name: str = "gemini-2.5-pro") -> str:
     if not GEMINI_AVAILABLE:
         return "Chatbot is unavailable because the Gemini API key is not configured."
     try:
@@ -59,15 +58,12 @@ def load_sentiment_model():
 def analyze_sentiment(text: str):
     return load_sentiment_model()(text)[0]
 
-# --- REWRITTEN AND ROBUST `fetch_stock_data` FUNCTION ---
+# --- SIMPLIFIED AND CORRECTED `fetch_stock_data` FUNCTION ---
 @st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    # Use a session with a browser user-agent to avoid being blocked by Yahoo Finance
-    session = requests.Session()
-    session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    
     try:
-        data = yf.download(ticker, start=start_date, end=end_date, session=session)
+        # Let yfinance handle the session automatically
+        data = yf.download(ticker, start=start_date, end=end_date)
         if data.empty:
             st.error(f"No data found for ticker '{ticker}'. The symbol may be incorrect or delisted.", icon="❌")
             return pd.DataFrame()
@@ -155,8 +151,8 @@ def plot_forecast(train, valid):
 # =================================================================================
 with st.sidebar:
     st.title("📈 FinBot 360")
-    st.markdown("---")
     # ... Rest of your code is unchanged and correct ...
+    st.markdown("---")
     st.subheader("API Status")
     if GEMINI_AVAILABLE: st.success("Gemini API: Connected", icon="✅")
     else: st.error("Gemini API: Disconnected", icon="❌")
@@ -226,7 +222,7 @@ with st.sidebar:
             st.session_state.forecast_fig = None
         if st.button("Generate Forecast"):
             st.session_state.forecast_fig = None
-            data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
+            data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-m-%d'))
             if not data.empty:
                 train, valid = forecast_stock(data)
                 if train is not None:
