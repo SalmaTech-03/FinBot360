@@ -41,7 +41,7 @@ except (KeyError, FileNotFoundError):
 # ALL HELPER FUNCTIONS
 # =================================================================================
 def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -> str:
-    # ... (This function is correct, no changes)
+    # ... (This function is correct) ...
     if not GEMINI_AVAILABLE: return "Chatbot is unavailable because the Gemini API key is not configured."
     try:
         model = genai.GenerativeModel(model_name)
@@ -53,33 +53,28 @@ def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -
 
 @st.cache_resource
 def load_sentiment_model():
-    # ... (This function is correct, no changes)
+    # ... (This function is correct) ...
     return pipeline("sentiment-analysis", model="ProsusAI/finbert")
 
 def analyze_sentiment(text: str):
-    # ... (This function is correct, no changes)
+    # ... (This function is correct) ...
     return load_sentiment_model()(text)[0]
 
-# --- ROBUST AND CORRECTED `get_news_and_sentiment` FUNCTION ---
 @st.cache_data(ttl=1800) 
 def get_news_and_sentiment(ticker: str):
+    # ... (This function is correct) ...
     stock = yf.Ticker(ticker)
     news = stock.news
     if not news: return "No News Found", "neutral", []
-
     sentiments, headlines = [], []
     for item in news[:8]:
-        # --- THE DEFINITIVE FIX IS HERE ---
-        # Safely get the 'title' using .get(), which returns None if 'title' is missing
         headline = item.get('title')
-        # Only process the item if a headline was actually found
         if headline:
             headlines.append(headline)
             result = analyze_sentiment(headline)
             if result['label'] == 'positive': sentiments.append(result['score'])
             elif result['label'] == 'negative': sentiments.append(-result['score'])
             else: sentiments.append(0)
-
     if not sentiments: return "No Score", "neutral", headlines
     avg_score = sum(sentiments) / len(sentiments)
     if avg_score > 0.3: overall_sentiment, color = "Positive", "green"
@@ -87,23 +82,23 @@ def get_news_and_sentiment(ticker: str):
     else: overall_sentiment, color = "Neutral", "orange"
     return overall_sentiment, color, headlines
 
-
+# --- CORRECTED `fetch_stock_data` FUNCTION ---
 @st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    # ... (This function is correct, no changes)
-    data = yf.download(ticker, start=start_date, end=date)
+    # --- THE DEFINITIVE FIX IS HERE: `date` has been corrected to `end_date` ---
+    data = yf.download(ticker, start=start_date, end=end_date)
     if data.empty:
         st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
         return pd.DataFrame()
     return data
 
 def preprocess_for_forecasting(data: pd.DataFrame):
-    # ... (This function is correct, no changes)
+    # ... (This function is correct) ...
     scaler = MinMaxScaler(feature_range=(0, 1))
     return scaler.fit_transform(data['Close'].values.reshape(-1, 1)), scaler
 
 def analyze_portfolio(df: pd.DataFrame):
-    # ... (This function is correct, no changes)
+    # ... (This function is correct) ...
     if 'Close' not in df.columns: st.error("Uploaded file must contain a 'Close' column for analysis."); return None, None, None, None
     daily_returns = df['Close'].pct_change().dropna()
     cumulative_returns = (1 + daily_returns).cumprod() - 1
@@ -112,7 +107,7 @@ def analyze_portfolio(df: pd.DataFrame):
     return daily_returns, cumulative_returns, volatility, sharpe_ratio
 
 def plot_portfolio_performance(df: pd.DataFrame, cumulative_returns: pd.Series):
-    # ... (This function is correct, no changes)
+    # ... (This function is correct) ...
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Portfolio Price'))
     fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns, mode='lines', name='Cumulative Returns', yaxis='y2'))
@@ -120,7 +115,7 @@ def plot_portfolio_performance(df: pd.DataFrame, cumulative_returns: pd.Series):
     return fig
 
 def create_lstm_model(input_shape):
-    # ... (This function is correct, no changes)
+    # ... (This function is correct) ...
     model = Sequential()
     model.add(LSTM(units=50, return_sequences=True, input_shape=input_shape))
     model.add(Dropout(0.2))
@@ -132,7 +127,7 @@ def create_lstm_model(input_shape):
     return model
 
 def forecast_stock(data: pd.DataFrame):
-    # ... (This function is correct, no changes)
+    # ... (This function is correct) ...
     scaled_data, scaler = preprocess_for_forecasting(data)
     if scaled_data is None: return None, None
     training_data_len = int(np.ceil(len(scaled_data) * .8))
@@ -156,7 +151,7 @@ def forecast_stock(data: pd.DataFrame):
     return train, valid
 
 def plot_forecast(train, valid):
-    # ... (This function is correct, no changes)
+    # ... (This function is correct) ...
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
     fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)', line=dict(color='orange')))
@@ -169,6 +164,7 @@ def plot_forecast(train, valid):
 # =================================================================================
 with st.sidebar:
     st.title("📈 FinBot 360")
+    # ... (Rest of sidebar is correct) ...
     st.markdown("---")
     st.subheader("API Status")
     if GEMINI_AVAILABLE: st.success("Gemini API: Connected", icon="✅")
@@ -180,7 +176,6 @@ with st.sidebar:
     st.markdown("---")
     st.header("Financial Tools")
 
-    # --- Tool 1: Live Market Dashboard (UPGRADED) ---
     with st.expander("🔴 Live Market Dashboard", expanded=True):
         st_autorefresh(interval=300 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter a Stock Ticker:", "AAPL", key="live_ticker").upper()
@@ -207,7 +202,6 @@ with st.sidebar:
                         for h in headlines: st.markdown(f"- {h}")
                     else: st.write("No headlines found.")
 
-    # --- Other Tools (No changes) ---
     with st.expander("😊 Financial Sentiment Analysis"):
         user_text = st.text_area("Enter text to analyze:", "Apple's stock soared after their strong quarterly earnings report.", height=100)
         if st.button("Analyze Sentiment"):
@@ -247,6 +241,7 @@ with st.sidebar:
 # ✅ MAIN PAGE - CHATBOT INTERFACE (No changes)
 # =================================================================================
 st.title("Natural Language Financial Q&A")
+# ... (Rest of main page is correct) ...
 st.markdown("Ask the AI assistant about financial topics, market trends, or definitions. Use the tools in the sidebar for specific analysis.")
 st.markdown("---")
 if "messages" not in st.session_state:
