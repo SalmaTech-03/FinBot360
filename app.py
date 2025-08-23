@@ -138,7 +138,6 @@ with st.sidebar:
     if GEMINI_AVAILABLE: st.success("Gemini API: Connected", icon="✅")
     else: st.error("Gemini API: Disconnected", icon="❌")
     
-    # Restored the Alpha Vantage API key check
     try:
         st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected", icon="✅")
     except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found", icon="⚠️")
@@ -147,55 +146,46 @@ with st.sidebar:
     st.markdown("---")
     st.header("Financial Tools")
 
-    # --- Tool 1: Live Market Dashboard (Restored with New Interactive Chart) ---
+    # --- Tool 1: Live Market Dashboard (SECTION WITH THE FIX) ---
     with st.expander("🔴 Live Market Dashboard", expanded=True):
-        st_autorefresh(interval=300 * 1000, key="datarefresh") # Refreshes every 5 minutes
+        st_autorefresh(interval=300 * 1000, key="datarefresh")
         st.markdown("Data from Alpha Vantage & Yahoo Finance.")
         ticker_symbol = st.text_input("Enter a Stock Ticker:", "MSFT", help="For non-US stocks, add exchange suffix (e.g., RELIANCE.NS)").upper()
         
-        # --- Display Live Price Metrics ---
         try:
             AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
             if ticker_symbol:
                 ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
                 quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
-                
-                st.metric(
-                    label=f"Live Price ({ticker_symbol})",
-                    value=f"${float(quote_data['05. price'][0]):.2f}",
-                    delta=f"{float(quote_data['09. change'][0]):.2f} ({quote_data['10. change percent'][0]})"
-                )
+                st.metric(label=f"Live Price ({ticker_symbol})", value=f"${float(quote_data['05. price'][0]):.2f}", delta=f"{float(quote_data['09. change'][0]):.2f} ({quote_data['10. change percent'][0]})")
         except Exception:
             st.error("Could not fetch live price. API limit may have been reached.")
             
         st.markdown("---")
         
-        # --- NEW: Display Interactive Recent Price Chart ---
         st.subheader("Recent Performance (Last 5 Days)")
         try:
             if ticker_symbol:
-                # Fetch last 5 days of data at a 30-minute interval
                 hist_data = yf.download(ticker_symbol, period="5d", interval="30m")
                 if not hist_data.empty:
-                    # Create the Plotly figure
+                    # --- THE DEFINITIVE FIX IS HERE ---
+                    # 1. Reset index to make 'Datetime' a regular column
+                    hist_data.reset_index(inplace=True)
+                    # 2. If 'Datetime' has timezone info, remove it
+                    if pd.api.types.is_datetime64_any_dtype(hist_data['Datetime']):
+                         hist_data['Datetime'] = hist_data['Datetime'].dt.tz_localize(None)
+
+                    # 3. Explicitly tell Plotly what to use for x and y axes
                     fig = go.Figure()
-                    # Add the line chart trace - Plotly handles the hover points automatically
-                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Price'))
-                    fig.update_layout(
-                        title=f'Price Movement for {ticker_symbol}',
-                        xaxis_title='Date and Time',
-                        yaxis_title='Stock Price ($)',
-                        showlegend=False,
-                        height=300 # Make the chart a bit more compact
-                    )
+                    fig.add_trace(go.Scatter(x=hist_data['Datetime'], y=hist_data['Close'], mode='lines', name='Price'))
+                    fig.update_layout(title=f'Price Movement for {ticker_symbol}', xaxis_title='Date and Time', yaxis_title='Stock Price ($)', showlegend=False, height=300)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("Could not fetch recent historical data to build the chart.")
         except Exception as e:
             st.error(f"An error occurred while building the chart: {e}")
 
-
-    # --- Tool 2: Sentiment Analysis ---
+    # --- Other Tools (No Changes) ---
     with st.expander("😊 Financial Sentiment Analysis"):
         user_text = st.text_area("Enter text to analyze:", "Apple's stock soared after their strong quarterly earnings report.", height=100)
         if st.button("Analyze Sentiment"):
@@ -206,7 +196,6 @@ with st.sidebar:
                 elif sentiment == 'NEGATIVE': st.error(f"Sentiment: {sentiment} (Score: {score:.2f})")
                 else: st.info(f"Sentiment: {sentiment} (Score: {score:.2f})")
 
-    # --- Tool 3: Portfolio Analysis ---
     with st.expander("📁 Portfolio Performance Analysis"):
         uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'])
         if uploaded_file:
@@ -221,7 +210,6 @@ with st.sidebar:
                 else: st.error("File must contain 'Date' and 'Close' columns.")
             except Exception as e: st.error(f"Error processing file: {e}")
 
-    # --- Tool 4: Stock Forecasting ---
     with st.expander("📊 Stock Forecasting"):
         ticker = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL", key="forecast_ticker").upper()
         if st.button("Generate Forecast"):
@@ -233,7 +221,7 @@ with st.sidebar:
                     st.plotly_chart(fig, use_container_width=True)
 
 # =================================================================================
-# ✅ MAIN PAGE - CHATBOT INTERFACE
+# ✅ MAIN PAGE - CHATBOT INTERFACE (No Changes)
 # =================================================================================
 st.title("Natural Language Financial Q&A")
 st.markdown("Ask the AI assistant about financial topics, market trends, or definitions. Use the tools in the sidebar for specific analysis.")
