@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import plotly.graph_objects as go # <--- THIS CRITICAL LINE IS NOW RESTORED
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from sklearn.preprocessing import MinMaxScaler
@@ -9,7 +10,7 @@ from transformers import pipeline
 import google.generativeai as genai
 import logging
 from io import StringIO
-from curl_cffi import requests as curl_requests # <-- Add this crucial import
+from curl_cffi import requests as curl_requests
 
 # --- Imports for the Sidebar Tools ---
 from streamlit_autorefresh import st_autorefresh
@@ -61,14 +62,11 @@ def analyze_sentiment(text: str):
     # ... (this function is correct, no changes needed)
     return load_sentiment_model()(text)[0]
 
-# --- REWRITTEN `fetch_stock_data` WITH MANUAL BROWSER SESSION ---
 @st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    # Manually create the specific curl_cffi session required by the new yfinance
+    # ... (this function is correct, no changes needed)
     session = curl_requests.Session(impersonate="chrome110")
-    
     try:
-        # Force yfinance to use our robust, browser-like session
         data = yf.download(ticker, start=start_date, end=end_date, session=session)
         if data.empty:
             st.error(f"No data found for ticker '{ticker}'. The symbol may be incorrect or delisted.", icon="❌")
@@ -159,7 +157,7 @@ def plot_forecast(train, valid):
 # ✅ SIDEBAR AND MAIN PAGE (No changes below this line)
 # =================================================================================
 with st.sidebar:
-    st.title("📈 FinBot 30")
+    st.title("📈 FinBot 360")
     # ... Rest of your code is unchanged and correct ...
     st.markdown("---")
     st.subheader("API Status")
