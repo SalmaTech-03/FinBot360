@@ -10,7 +10,6 @@ from transformers import pipeline
 import google.generativeai as genai
 import logging
 from io import StringIO
-from curl_cffi import requests as curl_requests # <-- Add this crucial import
 
 # --- Imports for the Sidebar Tools ---
 from streamlit_autorefresh import st_autorefresh
@@ -39,7 +38,7 @@ except (KeyError, FileNotFoundError):
     GEMINI_AVAILABLE = False
 
 # =================================================================================
-# ALL HELPER FUNCTIONS
+# ALL HELPER FUNCTIONS (Your Original, Working Code)
 # =================================================================================
 def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -> str:
     if not GEMINI_AVAILABLE: return "Chatbot is unavailable because the Gemini API key is not configured."
@@ -58,20 +57,14 @@ def load_sentiment_model():
 def analyze_sentiment(text: str):
     return load_sentiment_model()(text)[0]
 
-# --- THE ONLY PART THAT IS FIXED: Using a manual session to prevent blocking ---
 @st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    session = curl_requests.Session(impersonate="chrome110")
-    try:
-        data = yf.download(ticker, start=start_date, end=end_date, session=session)
-        if data.empty:
-            st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
-            return pd.DataFrame()
-        return data
-    except Exception as e:
-        st.error(f"Failed to download data for '{ticker}'. Error: {e}", icon="🚨")
+    # --- Reverted to the simple, standard yfinance call ---
+    data = yf.download(ticker, start=start_date, end=end_date)
+    if data.empty:
+        st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
         return pd.DataFrame()
-
+    return data
 
 def preprocess_for_forecasting(data: pd.DataFrame):
     scaler = MinMaxScaler(feature_range=(0, 1))
@@ -105,7 +98,6 @@ def create_lstm_model(input_shape):
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-# --- YOUR ORIGINAL, WORKING `forecast_stock` FUNCTION ---
 def forecast_stock(data: pd.DataFrame):
     scaled_data, scaler = preprocess_for_forecasting(data)
     if scaled_data is None: return None, None
@@ -138,10 +130,9 @@ def plot_forecast(train, valid):
     return fig
 
 # =================================================================================
-# ✅ SIDEBAR - TOOLS & CONTROLS (Your Original Code)
+# ✅ SIDEBAR AND MAIN PAGE (Your Original Code)
 # =================================================================================
 with st.sidebar:
-    # ... Your sidebar code is correct and unchanged ...
     st.title("📈 FinBot 360")
     st.markdown("---")
     st.subheader("API Status")
@@ -152,7 +143,6 @@ with st.sidebar:
     except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found", icon="⚠️")
     st.info("To toggle Dark Mode, use the Settings menu (top right).")
     st.markdown("---")
-
     st.header("Financial Tools")
 
     with st.expander("🔴 Live Market Dashboard"):
@@ -210,18 +200,12 @@ with st.sidebar:
                     fig = plot_forecast(train, valid)
                     st.plotly_chart(fig, use_container_width=True)
 
-
-# =================================================================================
-# ✅ MAIN PAGE - CHATBOT INTERFACE (Your Original Code)
-# =================================================================================
-# ... Your main page code is correct and unchanged ...
 st.title("Natural Language Financial Q&A")
 st.markdown("Ask the AI assistant about financial topics, market trends, or definitions. Use the tools in the sidebar for specific analysis.")
 st.markdown("---")
 
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you with your financial questions today?"}]
-
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
@@ -230,7 +214,6 @@ if prompt := st.chat_input("Ask a financial question..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
-
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             response = get_llm_response(prompt)
