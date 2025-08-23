@@ -38,7 +38,7 @@ except (KeyError, FileNotFoundError):
     GEMINI_AVAILABLE = False
 
 # =================================================================================
-# ALL HELPER FUNCTIONS (Your Original, Working Code)
+# ALL HELPER FUNCTIONS
 # =================================================================================
 def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -> str:
     if not GEMINI_AVAILABLE: return "Chatbot is unavailable because the Gemini API key is not configured."
@@ -65,66 +65,85 @@ def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFram
         return pd.DataFrame()
     return data
 
-def preprocess_for_forecasting(data: pd.DataFrame):
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    return scaler.fit_transform(data['Close'].values.reshape(-1, 1)), scaler
-
-def analyze_portfolio(df: pd.DataFrame):
-    if 'Close' not in df.columns:
-        st.error("Uploaded file must contain a 'Close' column for analysis.")
-        return None, None, None, None
-    daily_returns = df['Close'].pct_change().dropna()
-    cumulative_returns = (1 + daily_returns).cumprod() - 1
-    volatility = daily_returns.std() * np.sqrt(252)
-    sharpe_ratio = (daily_returns.mean() * 252) / volatility if volatility != 0 else 0
-    return daily_returns, cumulative_returns, volatility, sharpe_ratio
-
-def plot_portfolio_performance(df: pd.DataFrame, cumulative_returns: pd.Series):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Portfolio Price'))
-    fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns, mode='lines', name='Cumulative Returns', yaxis='y2'))
-    fig.update_layout(title='Portfolio Price and Cumulative Returns', xaxis_title='Date', yaxis_title='Portfolio Price ($)', yaxis2=dict(title='Cumulative Returns (%)', overlaying='y', side='right', showgrid=False), legend=dict(x=0.01, y=0.99))
-    return fig
-
 def create_lstm_model(input_shape):
-    model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True, input_shape=input_shape))
-    model.add(Dropout(0.2))
-    model.add(LSTM(units=50, return_sequences=False))
-    model.add(Dropout(0.2))
-    model.add(Dense(units=25))
-    model.add(Dense(units=1))
+    model = Sequential([
+        LSTM(50, return_sequences=True, input_shape=input_shape), Dropout(0.2),
+        LSTM(50, return_sequences=False), Dropout(0.2),
+        Dense(25), Dense(1)
+    ])
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
+# --- FINAL, ROBUST, AND CORRECTED FORECAST FUNCTION ---
 def forecast_stock(data: pd.DataFrame):
-    scaled_data, scaler = preprocess_for_forecasting(data)
-    if scaled_data is None: return None, None
-    training_data_len = int(np.ceil(len(scaled_data) * .8))
+    # 1. Prepare and clean data
+    data_close = data[['Close']].copy()
+    data_close.dropna(inplace=True)
+    if len(data_close) < 80:
+        st.error("Not enough valid data points to forecast (need at least 80).")
+        return None, None
+    dataset = data_close.values
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(dataset)
+
+    # 2. Create training data
+    training_data_len = int(np.ceil(len(dataset) * 0.8))
+    train_data = scaled_data[0:training_data_len]
     x_train, y_train = [], []
-    for i in range(60, len(scaled_data[:training_data_len])):
-        x_train.append(scaled_data[i-60:i, 0])
-        y_train.append(scaled_data[i, 0])
+    for i in range(60, len(train_data)):
+        x_train.append(train_data[i-60:i, 0])
+        y_train.append(train_data[i, 0])
+    
+    if not x_train:
+        st.error("Training data is too short for the 60-day lookback window.")
+        return None, None
+
     x_train, y_train = np.array(x_train), np.array(y_train)
     x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+
+    # 3. Train model
     model = create_lstm_model((x_train.shape[1], 1))
     with st.spinner('Training LSTM model... This may take a moment.'):
         model.fit(x_train, y_train, batch_size=32, epochs=10, verbose=0)
+
+    # 4. Create test data
     test_data = scaled_data[training_data_len - 60:, :]
     x_test = []
     for i in range(60, len(test_data)):
         x_test.append(test_data[i-60:i, 0])
+
+    if not x_test:
+        st.warning("Not enough data to form a validation set.")
+        return data_close[:training_data_len], None
+
     x_test = np.array(x_test)
     x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
-    predictions = scaler.inverse_transform(model.predict(x_test))
-    train = data[:training_data_len]; valid = data[training_data_len:].copy(); valid['Predictions'] = predictions
-    return train, valid
+
+    # 5. Get predictions
+    predictions = model.predict(x_test)
+    predictions = scaler.inverse_transform(predictions)
+
+    # 6. --- THE DEFINITIVE FIX: Manually construct the final dataframes ---
+    train_df = data_close.iloc[:training_data_len]
+    
+    # Get the specific dates for the validation period
+    validation_dates = data_close.index[training_data_len:]
+    
+    # Create the validation dataframe from scratch to ensure perfect alignment
+    # Handle any potential length mismatch between predictions and validation dates
+    valid_df = pd.DataFrame(index=validation_dates[:len(predictions)])
+    valid_df['Close'] = data_close['Close'].iloc[training_data_len:training_data_len + len(predictions)]
+    valid_df['Predictions'] = predictions.flatten()
+    
+    return train_df, valid_df
 
 def plot_forecast(train, valid):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
-    fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)', line=dict(color='orange')))
-    fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices', line=dict(color='cyan', dash='dash')))
+    if valid is not None and not valid.empty:
+        fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)', line=dict(color='orange')))
+        if 'Predictions' in valid.columns:
+            fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices', line=dict(color='cyan', dash='dash')))
     fig.update_layout(title='Stock Price Forecast vs. Actual', xaxis_title='Date', yaxis_title='Stock Price ($)', legend=dict(x=0.01, y=0.99))
     return fig
 
