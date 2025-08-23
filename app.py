@@ -11,7 +11,7 @@ import google.generativeai as genai
 import logging
 from io import StringIO
 
-# --- Imports for the Sidebar Tools ---
+# --- Imports for the Sidebar Tools (Restored) ---
 from streamlit_autorefresh import st_autorefresh
 import feedparser
 from alpha_vantage.fundamentaldata import FundamentalData
@@ -38,7 +38,7 @@ except (KeyError, FileNotFoundError):
     GEMINI_AVAILABLE = False
 
 # =================================================================================
-# ALL HELPER FUNCTIONS (No changes needed here)
+# ALL HELPER FUNCTIONS (No changes in this section)
 # =================================================================================
 def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -> str:
     if not GEMINI_AVAILABLE: return "Chatbot is unavailable because the Gemini API key is not configured."
@@ -137,35 +137,63 @@ with st.sidebar:
     st.subheader("API Status")
     if GEMINI_AVAILABLE: st.success("Gemini API: Connected", icon="✅")
     else: st.error("Gemini API: Disconnected", icon="❌")
+    
+    # Restored the Alpha Vantage API key check
     try:
         st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected", icon="✅")
     except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found", icon="⚠️")
+    
     st.info("To toggle Dark Mode, use the Settings menu (top right).")
     st.markdown("---")
-
     st.header("Financial Tools")
 
-    # --- Tool 1: Live Dashboard ---
-    with st.expander("🔴 Live Market Dashboard"):
-        st_autorefresh(interval=60 * 1000, key="datarefresh")
-        st.markdown("Data from Alpha Vantage & Reuters.")
-        ticker_symbol = st.text_input("Enter a Stock Ticker:", "IBM").upper()
+    # --- Tool 1: Live Market Dashboard (Restored with New Interactive Chart) ---
+    with st.expander("🔴 Live Market Dashboard", expanded=True):
+        st_autorefresh(interval=300 * 1000, key="datarefresh") # Refreshes every 5 minutes
+        st.markdown("Data from Alpha Vantage & Yahoo Finance.")
+        ticker_symbol = st.text_input("Enter a Stock Ticker:", "MSFT", help="For non-US stocks, add exchange suffix (e.g., RELIANCE.NS)").upper()
+        
+        # --- Display Live Price Metrics ---
         try:
             AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
             if ticker_symbol:
-                fd = FundamentalData(key=AV_API_KEY, output_format='pandas')
-                overview_data, _ = fd.get_company_overview(symbol=ticker_symbol)
                 ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
                 quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
-                st.subheader(f"{overview_data.loc['Name'][0]}")
-                st.metric("Price", f"${float(quote_data['05. price'][0]):.2f}", f"{float(quote_data['09. change'][0]):.2f} ({quote_data['10. change percent'][0]})")
-                st.text(f"P/E Ratio: {overview_data.loc['PERatio'][0]}")
-                st.text(f"Market Cap: ${int(overview_data.loc['MarketCapitalization'][0]):,}")
+                
+                st.metric(
+                    label=f"Live Price ({ticker_symbol})",
+                    value=f"${float(quote_data['05. price'][0]):.2f}",
+                    delta=f"{float(quote_data['09. change'][0]):.2f} ({quote_data['10. change percent'][0]})"
+                )
+        except Exception:
+            st.error("Could not fetch live price. API limit may have been reached.")
+            
+        st.markdown("---")
+        
+        # --- NEW: Display Interactive Recent Price Chart ---
+        st.subheader("Recent Performance (Last 5 Days)")
+        try:
+            if ticker_symbol:
+                # Fetch last 5 days of data at a 30-minute interval
+                hist_data = yf.download(ticker_symbol, period="5d", interval="30m")
+                if not hist_data.empty:
+                    # Create the Plotly figure
+                    fig = go.Figure()
+                    # Add the line chart trace - Plotly handles the hover points automatically
+                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Price'))
+                    fig.update_layout(
+                        title=f'Price Movement for {ticker_symbol}',
+                        xaxis_title='Date and Time',
+                        yaxis_title='Stock Price ($)',
+                        showlegend=False,
+                        height=300 # Make the chart a bit more compact
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Could not fetch recent historical data to build the chart.")
         except Exception as e:
-            st.error(f"Could not fetch live data. API limit may be reached.")
-        st.subheader("Live Financial News")
-        feed = feedparser.parse("http://feeds.reuters.com/reuters/businessNews")
-        for entry in feed.entries[:3]: st.markdown(f"[{entry.title}]({entry.link})")
+            st.error(f"An error occurred while building the chart: {e}")
+
 
     # --- Tool 2: Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis"):
@@ -195,7 +223,7 @@ with st.sidebar:
 
     # --- Tool 4: Stock Forecasting ---
     with st.expander("📊 Stock Forecasting"):
-        ticker = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL").upper()
+        ticker = st.text_input("Enter Ticker (e.g., AAPL):", "AAPL", key="forecast_ticker").upper()
         if st.button("Generate Forecast"):
             data = fetch_stock_data(ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
             if not data.empty:
@@ -207,32 +235,22 @@ with st.sidebar:
 # =================================================================================
 # ✅ MAIN PAGE - CHATBOT INTERFACE
 # =================================================================================
-
 st.title("Natural Language Financial Q&A")
 st.markdown("Ask the AI assistant about financial topics, market trends, or definitions. Use the tools in the sidebar for specific analysis.")
 st.markdown("---")
 
-# Initialize chat history
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you with your financial questions today?"}]
-
-# Display chat messages from history
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# Accept user input
 if prompt := st.chat_input("Ask a financial question..."):
-    # Add user message to chat history
     st.session_state.messages.append({"role": "user", "content": prompt})
-    # Display user message
     with st.chat_message("user"):
         st.markdown(prompt)
-
-    # Get and display assistant response
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             response = get_llm_response(prompt)
             st.markdown(response)
-    # Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": response})
