@@ -6,11 +6,11 @@ yfinance
 plotly
 scikit-learn
 
-# Machine Learning
-tensorflow
-torch
-safetensors
-transformers
+# --- STABLE AI/ML CONFIGURATION ---
+tensorflow==2.15.0
+transformers==4.38.2
+torch==2.1.0
+safetensors==0.4.2
 
 # API Libraries
 google-generativeai
