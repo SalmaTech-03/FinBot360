@@ -4,124 +4,110 @@ import numpy as np
 import yfinance as yf
 import plotly.graph_objects as go
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, LSTM
+from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
+import google.generativeai as genai
+import datetime
 
-# ----------------------------
-# App Title
-# ----------------------------
-st.title("📈 Stock Price Forecasting with LSTM")
+# ------------------------------
+# Gemini Setup
+# ------------------------------
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+model = genai.GenerativeModel("gemini-2.5-flash")
 
-# ----------------------------
-# Sidebar Inputs
-# ----------------------------
-st.sidebar.header("User Input")
-ticker = st.sidebar.text_input("Enter Stock Symbol", "AAPL")
-start_date = st.sidebar.date_input("Start Date", pd.to_datetime("2015-01-01"))
-end_date = st.sidebar.date_input("End Date", pd.to_datetime("today"))
+# ------------------------------
+# Streamlit UI
+# ------------------------------
+st.set_page_config(page_title="Stock Price Analyzer", layout="wide")
 
-# ----------------------------
-# Fetch Data
-# ----------------------------
-@st.cache_data
-def load_data(ticker, start, end):
-    df = yf.download(ticker, start=start, end=end)
-    df.reset_index(inplace=True)
-    return df
+st.title("📈 Stock Price Analysis & Forecasting with Gemini 2.5-Flash")
 
-data = load_data(ticker, start_date, end_date)
+ticker = st.text_input("Enter Stock Ticker (e.g., AAPL, TSLA, MSFT)", "AAPL")
+start_date = st.date_input("Start Date", datetime.date(2015, 1, 1))
+end_date = st.date_input("End Date", datetime.date.today())
 
-# ----------------------------
-# Show Raw Data
-# ----------------------------
-st.subheader(f"Raw Data for {ticker}")
-st.write(data.tail())
+if st.button("Analyze Stock"):
+    try:
+        # ------------------------------
+        # Fetch Stock Data
+        # ------------------------------
+        data = yf.download(ticker, start=start_date, end=end_date)
+        if data.empty:
+            st.error("No data found. Please try another ticker.")
+        else:
+            st.success(f"✅ Data fetched for {ticker}")
+            st.write(data.tail())
 
-# ----------------------------
-# Plot Closing Price
-# ----------------------------
-def plot_raw_data():
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=data['Date'], y=data['Close'], name="Close Price"))
-    fig.layout.update(title_text="Time Series Data", xaxis_rangeslider_visible=True)
-    st.plotly_chart(fig)
+            # ------------------------------
+            # Plot Historical Prices
+            # ------------------------------
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=data.index, y=data['Close'], mode='lines', name="Closing Price"))
+            fig.update_layout(title=f"{ticker} Stock Price", xaxis_title="Date", yaxis_title="Price (USD)")
+            st.plotly_chart(fig, use_container_width=True)
 
-plot_raw_data()
+            # ------------------------------
+            # Preprocess Data for LSTM
+            # ------------------------------
+            scaler = MinMaxScaler(feature_range=(0, 1))
+            scaled_data = scaler.fit_transform(data['Close'].values.reshape(-1, 1))
 
-# ----------------------------
-# Preprocessing & Forecast
-# ----------------------------
-def forecast_stock(data):
-    data_close = data[['Date', 'Close']].copy()
-    data_close['Date'] = pd.to_datetime(data_close['Date'])
-    data_close.set_index('Date', inplace=True)
+            train_size = int(len(scaled_data) * 0.8)
+            train_data = scaled_data[:train_size]
+            test_data = scaled_data[train_size:]
 
-    dataset = data_close.values
-    training_data_len = int(np.ceil(len(dataset) * 0.8))
+            def create_dataset(dataset, time_step=60):
+                X, y = [], []
+                for i in range(len(dataset) - time_step - 1):
+                    X.append(dataset[i:(i + time_step), 0])
+                    y.append(dataset[i + time_step, 0])
+                return np.array(X), np.array(y)
 
-    # Scale data
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(dataset)
+            time_step = 60
+            X_train, y_train = create_dataset(train_data, time_step)
+            X_test, y_test = create_dataset(test_data, time_step)
 
-    # Create training dataset
-    train_data = scaled_data[0:training_data_len, :]
-    x_train, y_train = [], []
+            X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+            X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
 
-    for i in range(60, len(train_data)):
-        x_train.append(train_data[i - 60:i, 0])
-        y_train.append(train_data[i, 0])
+            # ------------------------------
+            # Build LSTM Model
+            # ------------------------------
+            model_lstm = Sequential([
+                LSTM(50, return_sequences=True, input_shape=(time_step, 1)),
+                LSTM(50, return_sequences=False),
+                Dense(25),
+                Dense(1)
+            ])
+            model_lstm.compile(optimizer="adam", loss="mean_squared_error")
 
-    x_train, y_train = np.array(x_train), np.array(y_train)
-    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+            model_lstm.fit(X_train, y_train, batch_size=32, epochs=1, verbose=0)
 
-    # Build LSTM model
-    model = Sequential()
-    model.add(LSTM(50, return_sequences=True, input_shape=(x_train.shape[1], 1)))
-    model.add(LSTM(50, return_sequences=False))
-    model.add(Dense(25))
-    model.add(Dense(1))
+            predictions = model_lstm.predict(X_test)
+            predictions = scaler.inverse_transform(predictions)
 
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    model.fit(x_train, y_train, batch_size=1, epochs=1, verbose=0)
+            # ------------------------------
+            # Plot Predictions
+            # ------------------------------
+            train = data[:train_size]
+            valid = data[train_size:]
+            valid["Predictions"] = predictions
 
-    # Create testing dataset
-    test_data = scaled_data[training_data_len - 60:, :]
-    x_test, y_test = [], dataset[training_data_len:, :]
+            fig2 = go.Figure()
+            fig2.add_trace(go.Scatter(x=train.index, y=train["Close"], mode="lines", name="Training"))
+            fig2.add_trace(go.Scatter(x=valid.index, y=valid["Close"], mode="lines", name="Actual"))
+            fig2.add_trace(go.Scatter(x=valid.index, y=valid["Predictions"], mode="lines", name="Predicted"))
+            fig2.update_layout(title=f"{ticker} Stock Price Prediction", xaxis_title="Date", yaxis_title="Price (USD)")
+            st.plotly_chart(fig2, use_container_width=True)
 
-    for i in range(60, len(test_data)):
-        x_test.append(test_data[i - 60:i, 0])
+            # ------------------------------
+            # Gemini Financial Insight
+            # ------------------------------
+            with st.spinner("🔍 Analyzing with Gemini 2.5-Flash..."):
+                prompt = f"Provide financial insights for {ticker} stock based on historical trends and AI prediction."
+                response = model.generate_content(prompt)
+                st.subheader("📊 Gemini AI Financial Insight")
+                st.write(response.text)
 
-    x_test = np.array(x_test)
-    x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
-
-    # Predictions
-    predictions = model.predict(x_test)
-    predictions = scaler.inverse_transform(predictions)
-
-    # ✅ Safe alignment fix
-    validation_dates = data_close.index[training_data_len:]
-    pred_len = len(predictions)
-    date_len = len(validation_dates)
-    min_len = min(pred_len, date_len)
-
-    valid_df = pd.DataFrame({
-        'Close': data_close['Close'].iloc[training_data_len : training_data_len + min_len].values,
-        'Predictions': predictions.flatten()[:min_len]
-    }, index=validation_dates[:min_len])
-
-    return valid_df
-
-# ----------------------------
-# Run Forecast
-# ----------------------------
-st.subheader("Forecasted vs Actual Prices")
-forecast_data = forecast_stock(data)
-
-fig2 = go.Figure()
-fig2.add_trace(go.Scatter(x=forecast_data.index, y=forecast_data['Close'], name="Actual Price"))
-fig2.add_trace(go.Scatter(x=forecast_data.index, y=forecast_data['Predictions'], name="Predicted Price"))
-fig2.layout.update(title_text="LSTM Forecast", xaxis_rangeslider_visible=True)
-st.plotly_chart(fig2)
-
-st.write("### Forecasted Data (Last 10 Rows)")
-st.write(forecast_data.tail())
+    except Exception as e:
+        st.error(f"Error: {e}")
