@@ -1,23 +1,24 @@
 # Core App & Data Handling
-streamlit
-pandas
-numpy
-yfinance
-plotly
-scikit-learn
+streamlit==1.37.0
+pandas==2.2.2
+numpy==1.26.4
+yfinance==0.2.43
+plotly==5.24.0
+scikit-learn==1.5.1
 
-# --- AI/ML CONFIGURATION (TensorFlow removed, PyTorch only) ---
-torch>=2.8.0
-transformers>=4.55.0
-safetensors>=0.6.0
+# AI/ML Stable Versions
+tensorflow==2.15.0
+torch==2.1.2
+transformers==4.44.2
+safetensors==0.4.4
 
 # API Libraries
-google-generativeai
-alpha-vantage
-feedparser
-streamlit-autorefresh
+google-generativeai==0.7.0
+alpha-vantage==2.3.1
+feedparser==6.0.11
+streamlit-autorefresh==1.0.1
 
-# Optional
-openai
-python-dotenv
-Pillow
+# Optional (LLM APIs)
+openai==1.42.0
+anthropic==3.3.0
+llama-index==0.6.12
