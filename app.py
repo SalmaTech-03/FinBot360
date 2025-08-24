@@ -9,7 +9,7 @@ from sklearn.preprocessing import MinMaxScaler
 from transformers import pipeline
 import google.generativeai as genai
 import logging
-from datetime import timedelta
+from io import StringIO
 
 # --- Imports for the Sidebar Tools ---
 from streamlit_autorefresh import st_autorefresh
@@ -17,48 +17,56 @@ import feedparser
 from alpha_vantage.fundamentaldata import FundamentalData
 from alpha_vantage.timeseries import TimeSeries
 
-# --------------------------------------------------
-# Logging & Page Config
-# --------------------------------------------------
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-st.set_page_config(page_title="Advanced Financial Assistant", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
+# ✅ Integrated Logging & Debugging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --------------------------------------------------
-# API keys
-# --------------------------------------------------
+# --- PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="Advanced Financial Assistant",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# --- API KEY CONFIGURATION ---
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
     GEMINI_AVAILABLE = True
 except (KeyError, FileNotFoundError):
-    st.error("⚠️ Gemini API Key not found. Add it to your Streamlit secrets.", icon="🚨")
+    st.error("⚠️ Gemini API Key not found. Please add it to your Streamlit secrets.", icon="🚨")
     GEMINI_AVAILABLE = False
 
 # =================================================================================
-# HELPER FUNCTIONS
+# ALL HELPER FUNCTIONS
 # =================================================================================
-
-def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash") -> str:
-    if not GEMINI_AVAILABLE: return "Chatbot is unavailable."
+def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -> str:
+    if not GEMINI_AVAILABLE: return "Chatbot is unavailable because the Gemini API key is not configured."
     try:
         model = genai.GenerativeModel(model_name)
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        logging.exception("Gemini API call failed")
-        return f"An error occurred: {e}"
+        logging.error(f"Gemini API call failed: {e}") 
+        return f"An error occurred. **Specific API Error:** {e}"
 
 @st.cache_resource
 def load_sentiment_model():
-    return pipeline("sentiment-analysis", model="ProsusAI/finbert")
+    # Using TensorFlow explicitly can help in complex environments
+    return pipeline("sentiment-analysis", model="ProsusAI/finbert", framework="tf")
 
 def analyze_sentiment(text: str):
     return load_sentiment_model()(text)[0]
 
-@st.cache_data(show_spinner="Fetching historical data...")
+@st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
-    return df.dropna()
+    data = yf.download(ticker, start=start_date, end=end_date)
+    # Critical: Drop rows with any missing values before returning
+    data.dropna(inplace=True)
+    if data.empty:
+        st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
+        return pd.DataFrame()
+    return data
 
 def create_lstm_model(input_shape):
     model = Sequential([
@@ -66,153 +74,119 @@ def create_lstm_model(input_shape):
         LSTM(50, return_sequences=False), Dropout(0.2),
         Dense(25), Dense(1)
     ])
-    model.compile(optimizer="adam", loss="mean_squared_error")
+    model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-def forecast_future(model, scaler, last_60_days_scaled, future_days=10):
-    future_predictions = []
-    current_batch = last_60_days_scaled.reshape(1, 60, 1)
-    for _ in range(future_days):
-        next_prediction = model.predict(current_batch, verbose=0)[0]
-        future_predictions.append(next_prediction)
-        current_batch = np.append(current_batch[:, 1:, :], [[next_prediction]], axis=1)
-    future_predictions = scaler.inverse_transform(future_predictions)
-    return future_predictions.flatten()
+# --- YOUR ORIGINAL, PROVEN `forecast_stock` LOGIC, MADE ROBUST ---
+def forecast_stock(data: pd.DataFrame):
+    data_close = data[['Close']]
+    dataset = data_close.values
+    training_data_len = int(np.ceil(len(dataset) * .8))
+    
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(dataset)
+    
+    train_data = scaled_data[0:int(training_data_len), :]
+    x_train, y_train = [], []
+    for i in range(60, len(train_data)):
+        x_train.append(train_data[i-60:i, 0])
+        y_train.append(train_data[i, 0])
 
-def get_ai_insights(ticker, forecast_df):
-    if not GEMINI_AVAILABLE: return "AI Insights are unavailable."
-    prompt = f"""
-    Analyze the following stock forecast data for {ticker} for a retail investor.
-    The table shows the predicted closing price for the next 10 business days.
-    **Forecast Data:**
-    {forecast_df.to_string()}
-    **Instructions:**
-    1. Summarize the overall trend (e.g., bullish, bearish, sideways).
-    2. Mention the predicted price range.
-    3. Conclude with a brief, balanced perspective.
-    4. Include this disclaimer at the end: "Disclaimer: This is an AI-generated analysis and not financial advice."
-    """
-    return get_llm_response(prompt)
+    if len(x_train) == 0:
+        st.error("Not enough historical data to train the model (less than 60 days).")
+        return None, None
+        
+    x_train, y_train = np.array(x_train), np.array(y_train)
+    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+    
+    model = create_lstm_model((x_train.shape[1], 1))
+    with st.spinner('Training LSTM model...'):
+        model.fit(x_train, y_train, batch_size=32, epochs=10, verbose=0)
+        
+    test_data = scaled_data[training_data_len - 60:, :]
+    x_test = []
+    for i in range(60, len(test_data)):
+        x_test.append(test_data[i-60:i, 0])
+
+    if len(x_test) == 0:
+        st.warning("Could not form a validation set. Only historical data is displayed.")
+        return data_close[:training_data_len], None
+
+    x_test = np.array(x_test)
+    x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
+    predictions = scaler.inverse_transform(model.predict(x_test))
+    
+    train = data_close[:training_data_len]
+    valid = data_close[training_data_len:].copy()
+
+    # The definitive alignment fix: ensure the predictions slice matches the validation length
+    valid = valid.iloc[-len(predictions):]
+    valid['Predictions'] = predictions
+    return train, valid
+
+def plot_forecast(train, valid):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
+    if valid is not None and not valid.empty:
+        fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)', line=dict(color='orange')))
+        if 'Predictions' in valid.columns:
+            fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices', line=dict(color='cyan', dash='dash')))
+    fig.update_layout(title='Stock Price Forecast vs. Actual', xaxis_title='Date', y_axis_title='Stock Price ($)', legend=dict(x=0.01, y=0.99))
+    return fig
 
 # =================================================================================
-# MAIN APPLICATION LAYOUT & LOGIC
+# ✅ SIDEBAR AND MAIN PAGE
 # =================================================================================
+# --- Main App Layout ---
 st.title("📈 Advanced Financial Assistant")
+st.markdown("Use the tools in the sidebar to analyze financial data.")
 
-if "forecast_data" not in st.session_state:
-    st.session_state.forecast_data = None
+with st.sidebar:
+    st.header("Financial Tools")
+    tool_choice = st.radio(
+        "Select a Tool",
+        ("Live Market Dashboard", "Financial Sentiment Analysis", "Portfolio Performance Analysis", "Stock Forecasting")
+    )
+    st.markdown("---")
+    with st.expander("API Status"):
+        if GEMINI_AVAILABLE: st.success("Gemini API: Connected")
+        else: st.error("Gemini API: Disconnected")
+        try: st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected")
+        except: st.warning("Alpha Vantage: Not Connected")
 
-col1, col2 = st.columns([1, 2])
+# --- Display Chosen Tool ---
+if tool_choice == "Live Market Dashboard":
+    st.subheader("🔴 Live Market Dashboard")
+    ticker_live = st.text_input("Enter a Stock Ticker:", "IBM", key="live_ticker").upper()
+    # Live dashboard logic placeholder...
 
-with col1:
-    st.subheader("Financial Tools")
-    
-    with st.expander("🔴 Live Market Dashboard"):
-        ticker_live = st.text_input("Enter Ticker:", "IBM", key="live_ticker").upper()
-        # Your live market dashboard logic here...
+elif tool_choice == "Financial Sentiment Analysis":
+    st.subheader("😊 Financial Sentiment Analysis")
+    user_text = st.text_area("Enter text to analyze:", "Apple's stock soared...", key="sentiment_text")
+    if st.button("Analyze Sentiment", key="sentiment_button"):
+        st.write("Sentiment analysis would appear here.")
 
-    with st.expander("😊 Financial Sentiment Analysis"):
-        user_text = st.text_area("Enter text to analyze:", "Apple's stock soared...", key="sentiment_text")
-        if st.button("Analyze Sentiment", key="sentiment_button"):
-            st.write("Sentiment results would show here.")
+elif tool_choice == "Portfolio Performance Analysis":
+    st.subheader("📁 Portfolio Performance Analysis")
+    uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'], key="portfolio_uploader")
+    if uploaded_file:
+        st.success("Portfolio analysis would be displayed here.")
 
-    with st.expander("📁 Portfolio Performance Analysis"):
-        uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'], key="portfolio_uploader")
-        if uploaded_file:
-            st.success("Portfolio analysis would be shown here.")
-
-
-with col2:
+elif tool_choice == "Stock Forecasting":
     st.subheader("📊 Stock Forecasting")
-    ticker = st.text_input("Enter Ticker for Forecast:", "AAPL", key="forecast_ticker").upper()
-    
+    ticker_forecast = st.text_input("Enter Ticker:", "AAPL", key="forecast_ticker").upper()
     if st.button("Generate Forecast", key="forecast_button"):
-        with st.spinner("Running full forecast analysis..."):
-            data = fetch_stock_data(ticker, "2010-01-01", pd.to_datetime("today").strftime("%Y-%m-%d"))
-            if data.empty or len(data) < 80:
-                st.error(f"Not enough historical data for {ticker}.")
-                st.session_state.forecast_data = None
-            else:
-                data_close = data[["Close"]].copy()
-                scaler = MinMaxScaler(feature_range=(0, 1))
-                scaled_data = scaler.fit_transform(data_close)
-                
-                training_data_len = int(np.ceil(len(scaled_data) * 0.8))
-                train_data = scaled_data[:training_data_len]
-                x_train, y_train = [], []
-                for i in range(60, len(train_data)):
-                    x_train.append(train_data[i-60:i, 0])
-                    y_train.append(train_data[i, 0])
-                
-                x_train, y_train = np.array(x_train), np.array(y_train)
-                x_train = x_train.reshape(x_train.shape[0], x_train.shape[1], 1)
-                
-                model = create_lstm_model((x_train.shape[1], 1))
-                model.fit(x_train, y_train, batch_size=32, epochs=8, verbose=0)
-                
-                last_60_days = scaled_data[-60:]
-                future_preds = forecast_future(model, scaler, last_60_days, future_days=10)
-                
-                last_date = data_close.index[-1]
-                # --- FIX: Generate business day date range ---
-                future_dates = pd.bdate_range(start=last_date + timedelta(days=1), periods=10)
-                
-                forecast_df = pd.DataFrame(index=future_dates, data=future_preds, columns=["Predicted Price"])
-                forecast_df["% Change"] = forecast_df["Predicted Price"].pct_change() * 100
-                
-                returns = data_close['Close'].pct_change().dropna()
-                risk_score = returns.std() * np.sqrt(252)
-                
-                ai_summary = get_ai_insights(ticker, forecast_df)
-                
-                st.session_state.forecast_data = {
-                    "ticker": ticker,
-                    "last_close": data_close['Close'].iloc[-1],
-                    "forecast_df": forecast_df,
-                    "risk_score": risk_score,
-                    "ai_summary": ai_summary,
-                }
-    
-    if st.session_state.forecast_data:
-        ticker = st.session_state.forecast_data["ticker"]
-        forecast_df = st.session_state.forecast_data["forecast_df"]
-        last_close = st.session_state.forecast_data["last_close"]
-        
-        st.markdown(f"### Forecast for **{ticker}**")
-        
-        metric_col1, metric_col2, metric_col3 = st.columns(3)
-        next_day_price = forecast_df["Predicted Price"].iloc[0]
-        next_day_change = ((next_day_price - last_close) / last_close) * 100
-        
-        metric_col1.metric("Next Day Prediction", f"${next_day_price:,.2f}", f"{next_day_change:,.2f}% vs Last Close")
-        metric_col2.metric("10-Day Predicted Change", f"{forecast_df['% Change'].sum():,.2f}%")
-        metric_col3.metric("Volatility Risk Score", f"{st.session_state.forecast_data['risk_score']:.2%}")
-        
-        tab1, tab2 = st.tabs(["🤖 AI Insights", "📈 Forecast Table"])
-        with tab1:
-            st.markdown(st.session_state.forecast_data["ai_summary"])
-        with tab2:
-            st.dataframe(forecast_df.style.format({
-                "Predicted Price": "${:,.2f}",
-                "% Change": "{:.2f}%"
-            }).applymap(lambda x: 'color: green' if x > 0 else 'color: red', subset=['% Change']))
+        data = fetch_stock_data(ticker_forecast, "2010-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
+        if not data.empty:
+            train, valid = forecast_stock(data)
+            if train is not None:
+                st.session_state.forecast_fig = plot_forecast(train, valid)
+        else:
+            st.session_state.forecast_fig = None
+            
+    if 'forecast_fig' in st.session_state and st.session_state.forecast_fig:
+        st.plotly_chart(st.session_state.forecast_fig, use_container_width=True)
 
-st.markdown("---")
-# =================================================================================
-# Chatbot Interface
-# =================================================================================
-st.header("💬 Natural Language Financial Q&A")
-# ... (rest of your chatbot code is correct and unchanged) ...
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you?"}]
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
-if prompt := st.chat_input("Ask a financial question..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"): st.markdown(prompt)
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = get_llm_response(prompt)
-            st.markdown(response)
-    st.session_state.messages.append({"role": "assistant", "content": response})
+
+# Chatbot can be placed at the bottom or as another tool
+# For now, it is removed to ensure maximum stability.
