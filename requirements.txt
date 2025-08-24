@@ -6,11 +6,10 @@ yfinance
 plotly
 scikit-learn
 
-# --- AI/ML CONFIGURATION (Python 3.13 safe) ---
-# TensorFlow dropped (not supported yet)
-torch>=2.5.0
-transformers>=4.38.2
-safetensors>=0.4.2
+# --- AI/ML CONFIGURATION (TensorFlow removed, PyTorch only) ---
+torch>=2.8.0
+transformers>=4.55.0
+safetensors>=0.6.0
 
 # API Libraries
 google-generativeai
@@ -20,3 +19,5 @@ streamlit-autorefresh
 
 # Optional
 openai
+python-dotenv
+Pillow
