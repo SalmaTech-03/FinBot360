@@ -1,13 +1,22 @@
-streamlit==1.38.0
-yfinance==0.2.40
-pandas==2.2.2
-numpy==1.26.4
-plotly==5.24.0
+# Core App & Data Handling
+streamlit
+pandas
+numpy
+yfinance
+plotly
+scikit-learn
+
+# --- STABLE AI/ML CONFIGURATION ---
 tensorflow==2.15.0
-scikit-learn==1.5.0
-transformers==4.43.3
-torch==2.3.1
-google-generativeai==0.7.2
-streamlit-autorefresh==1.0.1
-alpha_vantage==2.3.1
-feedparser==6.0.11
+transformers==4.38.2
+torch==2.1.0
+safetensors==0.4.2
+
+# API Libraries
+google-generativeai
+alpha-vantage
+feedparser
+streamlit-autorefresh
+
+# Optional
+openai
