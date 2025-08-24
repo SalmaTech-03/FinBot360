@@ -6,14 +6,14 @@ yfinance
 plotly
 scikit-learn
 
-# --- STABLE AI/ML CONFIGURATION ---
+# --- AI/ML CONFIGURATION ---
 tensorflow==2.15.0
 transformers==4.38.2
 torch==2.1.0
 safetensors==0.4.2
 
 # API Libraries
-google-generativeai
+google-generativeai>=0.8.0   # Supports Gemini 1.5 & 2.5 Flash
 alpha-vantage
 feedparser
 streamlit-autorefresh
