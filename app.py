@@ -1,164 +1,155 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
+import yfinance as yf
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.layers import LSTM, Dense
 from sklearn.preprocessing import MinMaxScaler
-import requests
-from transformers import pipeline
 import datetime
+import google.generativeai as genai
 
-# -----------------------------
-# App Config
-# -----------------------------
-st.set_page_config(
-    page_title="FinBot 360",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# =========================
+# Gemini API Configuration
+# =========================
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-st.title("📊 FinBot 360 - Advanced Financial Assistant")
+def get_gemini_response(prompt):
+    try:
+        model = genai.GenerativeModel("gemini-pro")
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"⚠️ Gemini Error: {e}"
 
-# -----------------------------
-# Sidebar Navigation
-# -----------------------------
-st.sidebar.title("📌 Navigation")
-app_mode = st.sidebar.radio(
-    "Choose a section:",
-    ["Live Dashboard", "Portfolio Analysis", "Sentiment Analysis", "Stock Forecasting"]
-)
+# =========================
+# Stock Forecasting Module
+# =========================
+def prepare_data(stock_symbol, start, end):
+    df = yf.download(stock_symbol, start=start, end=end)
+    data = df[['Close']]
+    return data
 
-# -----------------------------
-# Stock Data Loader
-# -----------------------------
-@st.cache_data
-def load_stock_data(ticker, period="6mo"):
-    return yf.download(ticker, period=period)
+def build_lstm_model(trainX, trainY):
+    model = Sequential()
+    model.add(LSTM(50, return_sequences=True, input_shape=(trainX.shape[1], 1)))
+    model.add(LSTM(50))
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mean_squared_error')
+    return model
 
-# -----------------------------
-# Live Dashboard
-# -----------------------------
-if app_mode == "Live Dashboard":
-    st.subheader("📊 Live Stock Dashboard")
+def forecast_stock(stock_symbol):
+    end = datetime.datetime.now()
+    start = end - datetime.timedelta(days=365*2)
 
-    ticker = st.text_input("Enter Stock Symbol (e.g., AAPL, TSLA, MSFT):", "AAPL")
-    df = load_stock_data(ticker)
+    data = prepare_data(stock_symbol, start, end)
+    if data.empty:
+        return None, None, None, None
 
-    st.line_chart(df['Close'])
+    dataset = data.values
+    scaler = MinMaxScaler(feature_range=(0,1))
+    scaled_data = scaler.fit_transform(dataset)
 
-    st.write("Recent Data:")
-    st.dataframe(df.tail())
-
-# -----------------------------
-# Portfolio Analysis
-# -----------------------------
-elif app_mode == "Portfolio Analysis":
-    st.subheader("💼 Portfolio Analysis")
-
-    uploaded_file = st.file_uploader("Upload Portfolio CSV (columns: Ticker, Shares, BuyPrice)", type="csv")
-
-    if uploaded_file:
-        portfolio = pd.read_csv(uploaded_file)
-        st.write("Uploaded Portfolio:", portfolio)
-
-        current_values = []
-        for i, row in portfolio.iterrows():
-            ticker = row['Ticker']
-            shares = row['Shares']
-            buy_price = row['BuyPrice']
-            current_price = yf.download(ticker, period="1d")['Close'][-1]
-            pnl = (current_price - buy_price) * shares
-            current_values.append([ticker, shares, buy_price, current_price, pnl])
-
-        portfolio_df = pd.DataFrame(current_values, columns=["Ticker", "Shares", "BuyPrice", "CurrentPrice", "PnL"])
-        st.dataframe(portfolio_df)
-
-        total_pnl = portfolio_df['PnL'].sum()
-        st.metric("Total Profit/Loss", f"${total_pnl:,.2f}")
-
-# -----------------------------
-# Sentiment Analysis
-# -----------------------------
-elif app_mode == "Sentiment Analysis":
-    st.subheader("📰 Financial Sentiment Analysis")
-
-    stock_news = st.text_area("Paste financial news or article here:")
-
-    if stock_news:
-        sentiment_pipeline = pipeline("sentiment-analysis", model="ProsusAI/finbert")
-        results = sentiment_pipeline(stock_news)
-        st.write("Sentiment:", results[0]['label'])
-        st.write("Confidence:", f"{results[0]['score']:.2f}")
-
-# -----------------------------
-# Stock Forecasting with LSTM
-# -----------------------------
-elif app_mode == "Stock Forecasting":
-    st.subheader("📈 Stock Price Forecasting with LSTM")
-
-    ticker = st.text_input("Enter Stock Symbol for Forecasting:", "AAPL")
-    df = load_stock_data(ticker, "1y")
-
-    data = df[['Close']].values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data)
-
-    train_size = int(len(scaled_data) * 0.8)
+    # Train-Test Split
+    train_size = int(len(scaled_data)*0.8)
     train_data = scaled_data[:train_size]
-    test_data = scaled_data[train_size:]
+    test_data = scaled_data[train_size-60:]
 
+    # Create sequences
     def create_dataset(dataset, time_step=60):
         X, Y = [], []
-        for i in range(len(dataset)-time_step-1):
-            X.append(dataset[i:(i+time_step), 0])
-            Y.append(dataset[i+time_step, 0])
+        for i in range(time_step, len(dataset)):
+            X.append(dataset[i-time_step:i, 0])
+            Y.append(dataset[i, 0])
         return np.array(X), np.array(Y)
 
-    time_step = 60
-    X_train, y_train = create_dataset(train_data, time_step)
-    X_test, y_test = create_dataset(test_data, time_step)
+    X_train, Y_train = create_dataset(train_data)
+    X_test, Y_test = create_dataset(test_data)
 
-    X_train = X_train.reshape(X_train.shape[0], X_train.shape[1], 1)
-    X_test = X_test.reshape(X_test.shape[0], X_test.shape[1], 1)
+    X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], 1))
+    X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], 1))
 
-    model = Sequential([
-        LSTM(50, return_sequences=True, input_shape=(time_step, 1)),
-        Dropout(0.2),
-        LSTM(50, return_sequences=False),
-        Dense(25),
-        Dense(1)
-    ])
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    model.fit(X_train, y_train, epochs=1, batch_size=32, verbose=0)
+    # Train Model
+    model = build_lstm_model(X_train, Y_train)
+    model.fit(X_train, Y_train, epochs=5, batch_size=32, verbose=0)
 
+    # Forecast Next Day
+    last_60 = scaled_data[-60:]
+    X_input = np.reshape(last_60, (1, last_60.shape[0], 1))
+    predicted_price = model.predict(X_input)
+    predicted_price = scaler.inverse_transform(predicted_price)[0][0]
+
+    # Confidence Interval
     predictions = model.predict(X_test)
     predictions = scaler.inverse_transform(predictions)
+    Y_test = scaler.inverse_transform(Y_test.reshape(-1,1))
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(y=df['Close'].values[-len(y_test):], name="Actual"))
-    fig.add_trace(go.Scatter(y=predictions.flatten(), name="Predicted"))
-    fig.update_layout(title="Stock Price Forecast vs Actual", xaxis_title="Time", yaxis_title="Price ($)")
-    st.plotly_chart(fig, use_container_width=True)
+    residuals = Y_test.flatten() - predictions.flatten()
+    error_std = np.std(residuals)
 
-# -----------------------------
-# Always Visible Chatbot
-# -----------------------------
-st.markdown("---")
-st.subheader("🤖 Financial Chatbot")
+    lower_bound = predicted_price - 1.96*error_std
+    upper_bound = predicted_price + 1.96*error_std
 
-user_input = st.text_input("Ask me anything about finance:", "")
+    # Trend Direction
+    last_price = dataset[-1][0]
+    trend = "📈 Up" if predicted_price > last_price else "📉 Down"
 
-if user_input:
-    try:
-        response = requests.post(
-            "https://api.gemini.com/v1/chat",
-            json={"prompt": user_input}
-        )
-        if response.status_code == 200:
-            st.write("**Bot:**", response.json().get("response", "No response"))
+    return predicted_price, lower_bound, upper_bound, trend
+
+# =========================
+# Streamlit UI
+# =========================
+st.set_page_config(page_title="FinBot 360", layout="wide")
+
+# Sidebar
+st.sidebar.title("📊 Navigation")
+menu = st.sidebar.radio("Go to", ["Live Dashboard", "Portfolio", "Sentiment Analysis", "Stock Forecasting"])
+
+# Main Chatbot Area
+st.title("🤖 FinBot 360 - AI Financial Assistant")
+
+user_input = st.text_area("💬 Ask FinBot (AI-Powered Chatbot):", placeholder="e.g., What is the outlook for AAPL?")
+if st.button("Get Response"):
+    if user_input.strip():
+        with st.spinner("Thinking..."):
+            response = get_gemini_response(user_input)
+        st.markdown(f"**FinBot:** {response}")
+    else:
+        st.warning("Please enter a question.")
+
+# =========================
+# Modules
+# =========================
+if menu == "Live Dashboard":
+    st.subheader("📊 Live Stock Dashboard")
+    st.info("This module can be expanded with real-time stock/market updates.")
+
+elif menu == "Portfolio":
+    st.subheader("💼 Portfolio Analysis")
+    st.info("Portfolio insights, allocation, and risk metrics go here.")
+
+elif menu == "Sentiment Analysis":
+    st.subheader("📰 Sentiment Analysis")
+    st.info("This module analyzes financial news and market sentiment.")
+
+elif menu == "Stock Forecasting":
+    st.subheader("🔮 Stock Forecasting (Next Day Prediction)")
+    stock_symbol = st.text_input("Enter Stock Symbol (e.g., AAPL, TSLA, MSFT)", "AAPL")
+
+    if st.button("Run Forecast"):
+        with st.spinner("Training LSTM and forecasting..."):
+            predicted_price, lower, upper, trend = forecast_stock(stock_symbol)
+
+        if predicted_price is not None:
+            st.metric("Predicted Next-Day Price", f"${predicted_price:.2f}")
+            st.metric("Confidence Interval (95%)", f"${lower:.2f} - ${upper:.2f}")
+            st.metric("Trend Direction", trend)
+
+            st.markdown("---")
+            st.subheader("📝 Insights")
+            st.write(
+                f"The model predicts **{stock_symbol}** will close at **${predicted_price:.2f}** tomorrow. "
+                f"There's a 95% confidence the price will fall between **${lower:.2f}** and **${upper:.2f}**. "
+                f"Overall trend: **{trend}**."
+            )
         else:
-            st.write("**Bot:** Sorry, API unavailable right now.")
-    except Exception as e:
-        st.write("**Bot Error:**", str(e))
+            st.error("No data found for this stock symbol.")
