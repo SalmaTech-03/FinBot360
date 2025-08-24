@@ -111,6 +111,7 @@ def generate_future_forecast(data: pd.DataFrame, future_days=10):
     forecast_df['% Change'] = forecast_df['Predicted Price'].pct_change() * 100
     return forecast_df, None
 
+
 def get_ai_insights(ticker, forecast_df):
     if not GEMINI_AVAILABLE: return "AI Insights are unavailable."
     prompt = f"""
@@ -133,20 +134,66 @@ with st.sidebar:
     
     st.header("Financial Tools")
 
-    # --- LIVE MARKET DASHBOARD ---
+    # --- FULLY RESTORED LIVE MARKET DASHBOARD ---
     with st.expander("🔴 Live Market Dashboard", expanded=True):
+        st_autorefresh(interval=60 * 1000, key="live_refresh")
         ticker_live = st.text_input("Enter Ticker:", "IBM", key="live_ticker").upper()
-        if st.button("Get Live Data", key="get_live_data"):
-            st.success(f"Live data for {ticker_live} displayed!") # Placeholder logic
+        
+        if ticker_live:
+            # Live price via Alpha Vantage with trend arrow logic
+            if AV_AVAILABLE:
+                try:
+                    ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
+                    quote_data, _ = ts.get_quote_endpoint(symbol=ticker_live)
+                    
+                    current_price = float(quote_data['05. price'][0])
+                    previous_close = float(quote_data['08. previous close'][0])
+                    delta = current_price - previous_close
+                    delta_percent = (delta / previous_close) * 100
+                    trend_arrow = "⬆️" if delta > 0 else "⬇️" if delta < 0 else "➡️"
+                    
+                    st.metric(
+                        label=f"Live Price ({ticker_live}) {trend_arrow}",
+                        value=f"${current_price:.2f}",
+                        delta=f"{delta:.2f} ({delta_percent:.2f}%)"
+                    )
+                except Exception:
+                    st.error(f"Could not fetch live price from Alpha Vantage.")
 
-    # --- SENTIMENT ANALYSIS ---
-    with st.expander("😊 Financial Sentiment Analysis"):
-        user_text = st.text_area("Enter text to analyze:", "Apple's stock soared...", key="sentiment_text")
-        if st.button("Analyze Sentiment"):
-            st.success("Positive (Score: 0.90)") # Placeholder logic
-            
-    # --- PORTFOLIO ANALYSIS ---
-    with st.expander("📁 Portfolio Performance Analysis"):
+            # Live chart from yfinance
+            try:
+                live_data = yf.download(ticker_live, period="1mo", interval="1d", auto_adjust=True, progress=False)
+                if not live_data.empty:
+                    fig_live = go.Figure()
+                    fig_live.add_trace(go.Scatter(x=live_data.index, y=live_data["Close"], mode="lines", name="Close Price"))
+                    fig_live.update_layout(
+                        title=f"{ticker_live} Last Month Close Prices",
+                        xaxis_title="Date", yaxis_title="Price ($)", height=250, 
+                        margin=dict(l=20, r=20, t=40, b=20), template="plotly_dark"
+                    )
+                    st.plotly_chart(fig_live, use_container_width=True)
+                else:
+                    st.warning("No chart data found for this ticker.")
+            except Exception:
+                st.error(f"Error fetching chart data.")
+
+
+    # --- SENTIMENT ANALYSIS (BUTTONLESS) ---
+    with st.expander("😊 Financial Sentiment Analysis", expanded=False):
+        user_text = st.text_area("Enter text to analyze:", "Apple's stock soared on strong earnings.", key="sentiment_text")
+        if user_text: # Runs automatically when text is entered
+            try:
+                sentiment_pipeline = load_sentiment_model()
+                result = sentiment_pipeline(user_text)[0]
+                sentiment = result['label'].title(); score = result['score']
+                if sentiment == 'Positive': st.success(f"{sentiment} (Score: {score:.2f})")
+                elif sentiment == 'Negative': st.error(f"{sentiment} (Score: {score:.2f})")
+                else: st.info(f"{sentiment} (Score: {score:.2f})")
+            except Exception:
+                st.error("Could not analyze sentiment.")
+
+    # --- PORTFOLIO ANALYSIS (BUTTONLESS) ---
+    with st.expander("📁 Portfolio Performance Analysis", expanded=False):
         uploaded_file = st.file_uploader("Upload Portfolio CSV", type="csv", key="portfolio_uploader")
         if uploaded_file:
             st.success("Portfolio analysis placeholder.")
@@ -156,15 +203,14 @@ with st.sidebar:
 # =================================================================================
 st.title("Natural Language Financial Q&A")
 
-# --- CHATBOT RESTORED ---
+# --- Chatbot Display and Interaction ---
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
 if prompt := st.chat_input("Ask a financial question..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+    with st.chat_message("user"): st.markdown(prompt)
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             response = get_llm_response(prompt)
