@@ -35,18 +35,18 @@ except (KeyError, FileNotFoundError):
     GEMINI_AVAILABLE = False
 
 # =================================================================================
-# HELPER FUNCTIONS (Including New AI & Forecasting Functions)
+# HELPER FUNCTIONS
 # =================================================================================
 
 def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash") -> str:
-    if not GEMINI_AVAILABLE: return "Chatbot is unavailable because the Gemini API key is not configured."
+    if not GEMINI_AVAILABLE: return "Chatbot is unavailable."
     try:
         model = genai.GenerativeModel(model_name)
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
         logging.exception("Gemini API call failed")
-        return f"An error occurred. **Specific API Error:** {e}"
+        return f"An error occurred: {e}"
 
 @st.cache_resource
 def load_sentiment_model():
@@ -69,72 +69,53 @@ def create_lstm_model(input_shape):
     model.compile(optimizer="adam", loss="mean_squared_error")
     return model
 
-# --- NEW: Function to predict future dates ---
 def forecast_future(model, scaler, last_60_days_scaled, future_days=10):
     future_predictions = []
     current_batch = last_60_days_scaled.reshape(1, 60, 1)
-
     for _ in range(future_days):
-        # Predict the next day
         next_prediction = model.predict(current_batch, verbose=0)[0]
         future_predictions.append(next_prediction)
-        # Update the batch to include the new prediction and remove the oldest value
         current_batch = np.append(current_batch[:, 1:, :], [[next_prediction]], axis=1)
-
-    # Inverse transform the predictions to get actual price values
     future_predictions = scaler.inverse_transform(future_predictions)
     return future_predictions.flatten()
 
-# --- NEW: Function to get AI-powered insights ---
 def get_ai_insights(ticker, forecast_df):
-    if not GEMINI_AVAILABLE:
-        return "AI Insights are unavailable."
-
+    if not GEMINI_AVAILABLE: return "AI Insights are unavailable."
     prompt = f"""
-    Analyze the following stock forecast data for {ticker} and provide a summary for a retail investor.
+    Analyze the following stock forecast data for {ticker} for a retail investor.
     The table shows the predicted closing price for the next 10 business days.
-
     **Forecast Data:**
     {forecast_df.to_string()}
-
     **Instructions:**
-    1.  Start with a clear, concise summary of the overall trend (e.g., "The outlook for {ticker} appears bullish over the next two weeks...").
-    2.  Mention the predicted price range.
-    3.  Highlight any potential turning points or significant changes in the forecast.
-    4.  Conclude with a brief, balanced perspective.
-    5.  **Disclaimer:** Always include this disclaimer at the end: "Disclaimer: This is an AI-generated analysis and not financial advice. Always do your own research."
+    1. Summarize the overall trend (e.g., bullish, bearish, sideways).
+    2. Mention the predicted price range.
+    3. Conclude with a brief, balanced perspective.
+    4. Include this disclaimer at the end: "Disclaimer: This is an AI-generated analysis and not financial advice."
     """
     return get_llm_response(prompt)
 
 # =================================================================================
 # MAIN APPLICATION LAYOUT & LOGIC
 # =================================================================================
-
 st.title("📈 Advanced Financial Assistant")
 
-# --- Initialize Session State ---
 if "forecast_data" not in st.session_state:
     st.session_state.forecast_data = None
 
-# --- Main Columns Layout ---
 col1, col2 = st.columns([1, 2])
 
 with col1:
     st.subheader("Financial Tools")
-
-    # --- Tool 1: Live Market Dashboard ---
+    
     with st.expander("🔴 Live Market Dashboard"):
         ticker_live = st.text_input("Enter Ticker:", "IBM", key="live_ticker").upper()
-        # Your live market dashboard logic remains here...
+        # Your live market dashboard logic here...
 
-    # --- Tool 2: Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis"):
         user_text = st.text_area("Enter text to analyze:", "Apple's stock soared...", key="sentiment_text")
         if st.button("Analyze Sentiment", key="sentiment_button"):
-            # Your sentiment logic remains here...
             st.write("Sentiment results would show here.")
 
-    # --- Tool 3: Portfolio Upload ---
     with st.expander("📁 Portfolio Performance Analysis"):
         uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'], key="portfolio_uploader")
         if uploaded_file:
@@ -143,21 +124,19 @@ with col1:
 
 with col2:
     st.subheader("📊 Stock Forecasting")
-
     ticker = st.text_input("Enter Ticker for Forecast:", "AAPL", key="forecast_ticker").upper()
     
     if st.button("Generate Forecast", key="forecast_button"):
-        with st.spinner("Running full forecast analysis... This may take a few moments."):
+        with st.spinner("Running full forecast analysis..."):
             data = fetch_stock_data(ticker, "2010-01-01", pd.to_datetime("today").strftime("%Y-%m-%d"))
             if data.empty or len(data) < 80:
-                st.error(f"Not enough historical data for {ticker} to generate a forecast.")
+                st.error(f"Not enough historical data for {ticker}.")
                 st.session_state.forecast_data = None
             else:
                 data_close = data[["Close"]].copy()
                 scaler = MinMaxScaler(feature_range=(0, 1))
                 scaled_data = scaler.fit_transform(data_close)
                 
-                # --- Train LSTM Model ---
                 training_data_len = int(np.ceil(len(scaled_data) * 0.8))
                 train_data = scaled_data[:training_data_len]
                 x_train, y_train = [], []
@@ -171,24 +150,21 @@ with col2:
                 model = create_lstm_model((x_train.shape[1], 1))
                 model.fit(x_train, y_train, batch_size=32, epochs=8, verbose=0)
                 
-                # --- Get Future Predictions ---
                 last_60_days = scaled_data[-60:]
                 future_preds = forecast_future(model, scaler, last_60_days, future_days=10)
                 
                 last_date = data_close.index[-1]
-                future_dates = pd.to_datetime([last_date + timedelta(days=i) for i in range(1, 11)])
+                # --- FIX: Generate business day date range ---
+                future_dates = pd.bdate_range(start=last_date + timedelta(days=1), periods=10)
                 
                 forecast_df = pd.DataFrame(index=future_dates, data=future_preds, columns=["Predicted Price"])
                 forecast_df["% Change"] = forecast_df["Predicted Price"].pct_change() * 100
                 
-                # --- Calculate Risk and Key Metrics ---
                 returns = data_close['Close'].pct_change().dropna()
-                risk_score = returns.std() * np.sqrt(252) # Annualized volatility as a risk proxy
+                risk_score = returns.std() * np.sqrt(252)
                 
-                # --- Get AI Insights ---
                 ai_summary = get_ai_insights(ticker, forecast_df)
                 
-                # --- Store results in session state ---
                 st.session_state.forecast_data = {
                     "ticker": ticker,
                     "last_close": data_close['Close'].iloc[-1],
@@ -197,7 +173,6 @@ with col2:
                     "ai_summary": ai_summary,
                 }
     
-    # --- Display all results from session state ---
     if st.session_state.forecast_data:
         ticker = st.session_state.forecast_data["ticker"]
         forecast_df = st.session_state.forecast_data["forecast_df"]
@@ -205,7 +180,6 @@ with col2:
         
         st.markdown(f"### Forecast for **{ticker}**")
         
-        # --- Display Feature 2: Key Metrics ---
         metric_col1, metric_col2, metric_col3 = st.columns(3)
         next_day_price = forecast_df["Predicted Price"].iloc[0]
         next_day_change = ((next_day_price - last_close) / last_close) * 100
@@ -214,12 +188,9 @@ with col2:
         metric_col2.metric("10-Day Predicted Change", f"{forecast_df['% Change'].sum():,.2f}%")
         metric_col3.metric("Volatility Risk Score", f"{st.session_state.forecast_data['risk_score']:.2%}")
         
-        # --- Display Feature 3: AI Insights & Feature 1: Forecast Table ---
         tab1, tab2 = st.tabs(["🤖 AI Insights", "📈 Forecast Table"])
-        
         with tab1:
             st.markdown(st.session_state.forecast_data["ai_summary"])
-            
         with tab2:
             st.dataframe(forecast_df.style.format({
                 "Predicted Price": "${:,.2f}",
@@ -231,14 +202,12 @@ st.markdown("---")
 # Chatbot Interface
 # =================================================================================
 st.header("💬 Natural Language Financial Q&A")
-
+# ... (rest of your chatbot code is correct and unchanged) ...
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help you?"}]
-
 for m in st.session_state.messages:
     with st.chat_message(m["role"]):
         st.markdown(m["content"])
-
 if prompt := st.chat_input("Ask a financial question..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"): st.markdown(prompt)
