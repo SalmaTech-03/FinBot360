@@ -138,16 +138,39 @@ with st.sidebar:
     st.header("Financial Tools")
 
     # --- FULLY RESTORED LIVE MARKET DASHBOARD ---
-    with st.expander("🔴 Live Market Dashboard", expanded=True):
-        st_autorefresh(interval=300 * 1000, key="datarefresh")
-        ticker_live = st.text_input("Enter Ticker:", "IBM", key="live_ticker").upper()
-        if AV_AVAILABLE and ticker_live:
-            try:
-                ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
-                quote_data, _ = ts.get_quote_endpoint(symbol=ticker_live)
-                st.metric(label=f"Live Price ({ticker_live})", value=f"${float(quote_data['05. price'][0]):.2f}", delta=f"{float(quote_data['09. change'][0]):.2f} ({quote_data['10. change percent'][0]})")
-            except Exception as e:
-                st.error("Could not fetch live price. API limit may be reached.")
+    st.title("🔴 Live Market Dashboard")
+
+# Auto-refresh every 5 minutes
+st_autorefresh(interval=300 * 1000, key="datarefresh")
+
+ticker_live = st.text_input("Enter Ticker:", "IBM").upper()
+
+if ticker_live:
+    # Live price via Alpha Vantage
+    if AV_AVAILABLE:
+        try:
+            ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
+            quote_data, _ = ts.get_quote_endpoint(symbol=ticker_live)
+            st.metric(
+                label=f"Live Price ({ticker_live})",
+                value=f"${float(quote_data['05. price'][0]):.2f}",
+                delta=f"{float(quote_data['09. change'][0]):.2f} ({quote_data['10. change percent'][0]})"
+            )
+        except Exception as e:
+            st.error(f"Could not fetch live price. Error: {e}")
+
+    # Live chart from yfinance
+    try:
+        live_data = yf.download(ticker_live, period="1mo", interval="1d", auto_adjust=True, progress=False)
+        if not live_data.empty:
+            fig_live = go.Figure()
+            fig_live.add_trace(go.Scatter(x=live_data.index, y=live_data["Close"], mode="lines+markers", name="Close Price"))
+            fig_live.update_layout(title=f"{ticker_live} Last Month Close Prices", xaxis_title="Date", yaxis_title="Price ($)")
+            st.plotly_chart(fig_live, use_container_width=True)
+        else:
+            st.warning("No historical data found for this ticker.")
+    except Exception as e:
+        st.error(f"Error fetching historical data: {e}")
         
         # Live chart from yfinance
         live_data = yf.download(ticker_live, period="1mo", interval="1d", auto_adjust=True, progress=False)
