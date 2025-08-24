@@ -6,12 +6,11 @@ yfinance
 plotly
 scikit-learn
 
-# --- STABLE AI/ML CONFIGURATION ---
-# Pinning specific versions known to be compatible on Streamlit Cloud
-tensorflow==2.15.0
-transformers==4.38.2
-torch==2.1.0
-safetensors==0.4.2
+# --- AI/ML CONFIGURATION (Python 3.13 safe) ---
+# TensorFlow dropped (not supported yet)
+torch>=2.5.0
+transformers>=4.38.2
+safetensors>=0.4.2
 
 # API Libraries
 google-generativeai
