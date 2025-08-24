@@ -218,4 +218,4 @@ if prompt := st.chat_input("Ask a financial question..."):
         with st.spinner("Thinking..."):
             response = get_llm_response(prompt)
             st.markdown(response)
-    st.session_state.messages.append({"role": "assistant", "content": response})s
+    st.session_state.messages.append({"role": "assistant", "content": response})
