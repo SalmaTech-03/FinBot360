@@ -6,229 +6,163 @@ import plotly.graph_objects as go
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from sklearn.preprocessing import MinMaxScaler
-from transformers import pipeline
+import datetime
 import google.generativeai as genai
-import logging
+from transformers import pipeline
 
-from streamlit_autorefresh import st_autorefresh
-import feedparser
-from alpha_vantage.fundamentaldata import FundamentalData
-from alpha_vantage.timeseries import TimeSeries
+# ------------------ PAGE CONFIG ------------------
+st.set_page_config(page_title="Advanced Financial Assistant", layout="wide")
 
-# --------------------------------------------------
-# Logging
-# --------------------------------------------------
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# Gemini setup
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
-# --------------------------------------------------
-# Page config
-# --------------------------------------------------
-st.set_page_config(
-    page_title="Advanced Financial Assistant",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# Sentiment Analysis (FinBERT)
+sentiment_pipeline = pipeline("sentiment-analysis", model="ProsusAI/finbert")
 
-# --------------------------------------------------
-# API keys
-# --------------------------------------------------
-try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=GEMINI_API_KEY)
-    GEMINI_AVAILABLE = True
-except (KeyError, FileNotFoundError):
-    st.error("⚠️ Gemini API Key not found. Add it to your Streamlit secrets.", icon="🚨")
-    GEMINI_AVAILABLE = False
+# ------------------ NAVIGATION ------------------
+menu = ["📊 Live Dashboard", "📈 Stock Forecasting", "📰 Sentiment Analysis", "💼 Portfolio Analysis", "🤖 Chatbot"]
+choice = st.sidebar.radio("Navigate", menu)
 
-# --------------------------------------------------
-# Helpers
-# --------------------------------------------------
-def extract_gemini_text(response) -> str:
-    try:
-        if hasattr(response, "text") and response.text:
-            return response.text
-        if getattr(response, "candidates", None):
-            parts = getattr(response.candidates[0].content, "parts", [])
-            texts = [getattr(p, "text", None) for p in parts if getattr(p, "text", None)]
-            return "\n".join(texts) if texts else "No text returned."
-        return "No response generated."
-    except Exception as e:
-        return f"Failed to parse model output: {e}"
+# ------------------ LIVE DASHBOARD ------------------
+if choice == "📊 Live Dashboard":
+    st.title("📊 Live Stock Dashboard")
+    ticker = st.text_input("Enter Stock Ticker (e.g. AAPL, TSLA, INFY.NS):", "AAPL")
+    period = st.selectbox("Select Period", ["1mo", "3mo", "6mo", "1y", "5y", "max"], index=1)
 
-def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash") -> str:
-    if not GEMINI_AVAILABLE:
-        return "Chatbot is unavailable because the Gemini API key is not configured."
-    try:
-        model = genai.GenerativeModel(model_name)
-        response = model.generate_content(prompt)
-        return extract_gemini_text(response)
-    except Exception as e:
-        logging.exception("Gemini API call failed")
-        return f"An error occurred. **Specific API Error:** {e}"
+    if st.button("Load Data"):
+        data = yf.download(ticker, period=period, interval="1d")
+        st.subheader(f"Stock Data for {ticker}")
+        st.write(data.tail())
 
-@st.cache_resource
-def load_sentiment_model():
-    return pipeline("sentiment-analysis", model="ProsusAI/finbert")
+        fig = go.Figure(data=[go.Candlestick(x=data.index,
+                                             open=data['Open'],
+                                             high=data['High'],
+                                             low=data['Low'],
+                                             close=data['Close'])])
+        fig.update_layout(title=f"{ticker} Price Chart", xaxis_rangeslider_visible=False)
+        st.plotly_chart(fig, use_container_width=True)
 
-def analyze_sentiment(text: str):
-    return load_sentiment_model()(text)[0]
+# ------------------ STOCK FORECASTING ------------------
+elif choice == "📈 Stock Forecasting":
+    st.title("📈 Stock Price Forecasting (LSTM Model)")
 
-@st.cache_data(show_spinner=False)
-def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    df = yf.download(ticker, start=start_date, end=end_date, auto_adjust=True, progress=False)
-    return df.dropna()
+    ticker = st.text_input("Enter Stock Ticker:", "AAPL")
+    n_days = st.slider("Forecast Days:", 1, 15, 5)
 
-def create_lstm_model(input_shape):
-    model = Sequential([
-        LSTM(50, return_sequences=True, input_shape=input_shape),
-        Dropout(0.2),
-        LSTM(50, return_sequences=False),
-        Dropout(0.2),
-        Dense(25),
-        Dense(1),
-    ])
-    model.compile(optimizer="adam", loss="mean_squared_error")
-    return model
+    if st.button("Run Forecast"):
+        df = yf.download(ticker, period="2y")
+        data = df[['Close']].values
 
-def forecast_stock(data: pd.DataFrame):
-    data_close = data[["Close"]].copy()
-    dataset = data_close.values
-    training_data_len = int(np.ceil(len(dataset) * 0.8))
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaled_data = scaler.fit_transform(data)
 
-    if len(dataset) < 80:
-        st.error("Not enough historical data to train (need at least ~80 rows).")
-        return None, None
+        X, y = [], []
+        for i in range(60, len(scaled_data)):
+            X.append(scaled_data[i-60:i, 0])
+            y.append(scaled_data[i, 0])
+        X, y = np.array(X), np.array(y)
+        X = np.reshape(X, (X.shape[0], X.shape[1], 1))
 
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled = scaler.fit_transform(dataset)
+        model = Sequential([
+            LSTM(50, return_sequences=True, input_shape=(X.shape[1], 1)),
+            Dropout(0.2),
+            LSTM(50, return_sequences=False),
+            Dropout(0.2),
+            Dense(25),
+            Dense(1)
+        ])
+        model.compile(optimizer="adam", loss="mean_squared_error")
+        model.fit(X, y, batch_size=32, epochs=3, verbose=0)
 
-    train_data = scaled[:training_data_len]
-    x_train, y_train = [], []
-    for i in range(60, len(train_data)):
-        x_train.append(train_data[i - 60:i, 0])
-        y_train.append(train_data[i, 0])
+        # Forecast
+        last_60 = scaled_data[-60:]
+        last_60 = np.reshape(last_60, (1, last_60.shape[0], 1))
 
-    x_train, y_train = np.array(x_train), np.array(y_train)
-    x_train = x_train.reshape((x_train.shape[0], x_train.shape[1], 1))
+        forecasted_prices = []
+        for _ in range(n_days):
+            pred = model.predict(last_60, verbose=0)
+            forecasted_prices.append(pred[0, 0])
+            last_60 = np.append(last_60[:, 1:, :], [[pred]], axis=1)
 
-    model = create_lstm_model((x_train.shape[1], 1))
-    with st.spinner("Training LSTM model..."):
-        model.fit(x_train, y_train, batch_size=32, epochs=8, verbose=0)
+        forecasted_prices = scaler.inverse_transform(np.array(forecasted_prices).reshape(-1, 1))
 
-    test_data = scaled[training_data_len - 60:, :]
-    x_test = [test_data[i - 60:i, 0] for i in range(60, len(test_data))]
-    x_test = np.array(x_test).reshape((-1, 60, 1))
+        future_dates = pd.date_range(start=df.index[-1] + pd.Timedelta(days=1), periods=n_days)
 
-    preds = model.predict(x_test, verbose=0)
-    preds = scaler.inverse_transform(preds).flatten()
+        forecast_df = pd.DataFrame({
+            "Date": future_dates,
+            "Predicted Price": forecasted_prices.flatten()
+        })
 
-    train_df = data_close.iloc[:training_data_len].copy()
-    valid_index = data_close.index[training_data_len:training_data_len + len(preds)]
-    valid_df = pd.DataFrame({
-        "Close": data_close["Close"].iloc[training_data_len:training_data_len + len(preds)].values,
-        "Predictions": preds},
-        index=valid_index,
-    )
-    return train_df, valid_df
+        # 1️⃣ Forecast Table
+        st.subheader("📅 Forecast Table")
+        st.dataframe(forecast_df.style.format({"Predicted Price": "{:.2f}"}))
 
-def plot_forecast(train: pd.DataFrame, valid: pd.DataFrame):
-    fig = go.Figure()
-    if train is not None and not train.empty:
-        fig.add_trace(go.Scatter(x=train.index, y=train["Close"], mode="lines", name="Historical Prices"))
-    if valid is not None and not valid.empty:
-        fig.add_trace(go.Scatter(x=valid.index, y=valid["Close"], mode="lines", name="Actual Prices (Validation)"))
-        if "Predictions" in valid.columns:
-            fig.add_trace(go.Scatter(x=valid.index, y=valid["Predictions"], mode="lines", name="Predicted Prices", line=dict(dash="dash")))
-    fig.update_layout(
-        title="Stock Price Forecast vs. Actual",
-        xaxis_title="Date",
-        yaxis_title="Stock Price ($)",
-        legend=dict(x=0.01, y=0.99),
-        margin=dict(l=20, r=20, t=60, b=20),
-    )
-    return fig
+        # 2️⃣ Key Metrics
+        st.subheader("📌 Key Metrics")
+        next_day = forecast_df.iloc[0]["Predicted Price"]
+        last_close = df["Close"].iloc[-1]
+        pct_change = ((next_day - last_close) / last_close) * 100
+        risk_score = np.abs(pct_change) * 2  
 
-# --------------------------------------------------
-# Sidebar
-# --------------------------------------------------
-with st.sidebar:
-    st.title("📈 FinBot 360")
-    st.markdown("---")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Next Day Price", f"${next_day:.2f}")
+        col2.metric("Expected Change", f"{pct_change:.2f}%")
+        col3.metric("Risk Score", f"{risk_score:.1f}/10")
 
-    with st.expander("API Status", expanded=False):
-        st.success("Gemini API: Connected" if GEMINI_AVAILABLE else "Gemini API: Disconnected")
-        try:
-            _ = st.secrets["ALPHA_VANTAGE_API_KEY"]
-            st.success("Alpha Vantage: Connected")
-        except (KeyError, FileNotFoundError):
-            st.warning("Alpha Vantage: Not Connected")
+        # 3️⃣ AI Insights
+        st.subheader("🤖 AI Insights")
+        prompt = f"""
+        Analyze the following stock forecast for {ticker}:
+        Last close: {last_close:.2f}, Next day prediction: {next_day:.2f}, Change: {pct_change:.2f}%
+        Provide a short investment insight in 2-3 lines.
+        """
+        ai_response = genai.GenerativeModel("gemini-2.5-flash").generate_content(prompt)
+        st.write(ai_response.text)
 
-    # Live Market Dashboard
-    with st.expander("🔴 Live Market Dashboard", expanded=True):
-        ticker_live = st.text_input("Enter Ticker:", "IBM", key="live_ticker").upper()
-        colA, colB = st.columns([1, 1])
-        with colA:
-            period = st.selectbox("Period", ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=2)
-        with colB:
-            interval = st.selectbox("Interval", ["1d", "1h", "30m", "15m", "5m"], index=0)
-        if st.button("Get Live Data", key="btn_live"):
-            live = yf.download(ticker_live, period=period, interval=interval, auto_adjust=True, progress=False)
-            if live.empty:
-                st.error("No data returned. Check ticker or interval.")
-            else:
-                fig_live = go.Figure()
-                fig_live.add_trace(go.Scatter(x=live.index, y=live["Close"], mode="lines", name="Close Price"))
-                st.plotly_chart(fig_live, use_container_width=True)
-                st.caption(f"{ticker_live} close price ({period}/{interval})")
-                st.metric("Last Close", f"${live['Close'].iloc[-1]:,.2f}")
+# ------------------ SENTIMENT ANALYSIS ------------------
+elif choice == "📰 Sentiment Analysis":
+    st.title("📰 Stock Market News Sentiment Analysis")
+    news = st.text_area("Paste financial news/article text here:")
 
-    # Sentiment
-    with st.expander("😊 Financial Sentiment Analysis", expanded=True):
-        user_text = st.text_area("Enter text to analyze:", "Apple's stock soared on strong earnings.")
-        if st.button("Analyze Sentiment", key="btn_sent"):
-            with st.spinner("Analyzing..."):
-                try:
-                    res = analyze_sentiment(user_text)
-                    st.write(res)
-                except Exception as e:
-                    st.error(f"Sentiment pipeline error: {e}")
+    if st.button("Analyze Sentiment"):
+        if news:
+            result = sentiment_pipeline(news)[0]
+            st.write(f"**Sentiment:** {result['label']} (score: {result['score']:.2f})")
+        else:
+            st.warning("Please enter some text!")
 
-    # Forecast
-    with st.expander("📊 Stock Forecasting", expanded=True):
-        ticker = st.text_input("Enter Ticker:", "AAPL", key="forecast_ticker").upper()
-        if st.button("Generate Forecast", key="forecast_button"):
-            data = fetch_stock_data(ticker, "2000-01-01", pd.to_datetime("today").strftime("%Y-%m-%d"))
-            if data.empty:
-                st.error(f"No data for {ticker}.")
-            else:
-                train, valid = forecast_stock(data)
-                if train is not None:
-                    fig_forecast = plot_forecast(train, valid)
-                    st.plotly_chart(fig_forecast, use_container_width=True)
+# ------------------ PORTFOLIO ANALYSIS ------------------
+elif choice == "💼 Portfolio Analysis":
+    st.title("💼 Portfolio Upload & Analysis")
+    uploaded_file = st.file_uploader("Upload CSV (Ticker, Shares)", type=["csv"])
 
-# --------------------------------------------------
-# Chat
-# --------------------------------------------------
-st.title("Natural Language Financial Q&A")
-st.markdown("Ask the AI assistant about financial topics, market trends, or definitions.")
-st.markdown("---")
+    if uploaded_file:
+        portfolio = pd.read_csv(uploaded_file)
+        st.write("Uploaded Portfolio:", portfolio)
 
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "Hello! How can I help you with your financial questions today?"}
-    ]
+        total_value = 0
+        for i, row in portfolio.iterrows():
+            ticker = row["Ticker"]
+            shares = row["Shares"]
+            price = yf.download(ticker, period="1d")["Close"].iloc[-1]
+            value = shares * price
+            portfolio.loc[i, "Latest Price"] = price
+            portfolio.loc[i, "Value"] = value
+            total_value += value
 
-for m in st.session_state.messages:
-    with st.chat_message(m["role"]):
-        st.markdown(m["content"])
+        st.subheader("📊 Portfolio Performance")
+        st.dataframe(portfolio)
 
-if prompt := st.chat_input("Ask a financial question..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            response = get_llm_response(prompt)
-            st.markdown(response)
-    st.session_state.messages.append({"role": "assistant", "content": response})
+        st.success(f"💰 Total Portfolio Value: ${total_value:,.2f}")
+
+# ------------------ CHATBOT ------------------
+elif choice == "🤖 Chatbot":
+    st.title("🤖 Gemini AI Chatbot - Financial Assistant")
+    user_input = st.text_area("Ask me anything about stocks/finance:")
+
+    if st.button("Get Answer"):
+        if user_input:
+            response = genai.GenerativeModel("gemini-2.5-flash").generate_content(user_input)
+            st.write(response.text)
+        else:
+            st.warning("Please enter a question!")
