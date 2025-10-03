@@ -48,7 +48,7 @@ if "forecast_data" not in st.session_state:
 # =================================================================================
 # HELPER FUNCTIONS
 # =================================================================================
-def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash") -> str:
+def get_llm_response(prompt: str, model_name: str = "gemini-2.5-flash") -> str:
     if not GEMINI_AVAILABLE: return "Chatbot is unavailable."
     try:
         model = genai.GenerativeModel(model_name)
