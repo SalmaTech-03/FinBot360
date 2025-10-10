@@ -66,6 +66,16 @@ def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFram
         return pd.DataFrame()
     return data
 
+def analyze_portfolio(df: pd.DataFrame):
+    if 'Close' not in df.columns:
+        st.error("Uploaded file must contain a 'Close' column for analysis.")
+        return None, None, None, None
+    daily_returns = df['Close'].pct_change().dropna()
+    cumulative_returns = (1 + daily_returns).cumprod() - 1
+    volatility = daily_returns.std() * np.sqrt(252)
+    sharpe_ratio = (daily_returns.mean() * 252) / volatility if volatility != 0 else 0
+    return daily_returns, cumulative_returns, volatility, sharpe_ratio
+
 def create_lstm_model(input_shape):
     model = Sequential([
         LSTM(units=50, return_sequences=True, input_shape=input_shape),
@@ -146,30 +156,34 @@ with st.sidebar:
                 quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
                 price = float(quote_data['05. price'][0])
                 change = float(quote_data['09. change'][0])
-                change_percent_str = quote_data['10. change percent'][0]
-                change_percent = float(change_percent_str.replace('%',''))
+                change_percent = float(quote_data['10. change percent'][0].replace('%',''))
                 st.metric("Live Price (Alpha Vantage)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
             except Exception:
-                st.error("Could not fetch live price. API limit may be reached.")
+                st.error("Could not fetch live price.")
 
-            st.markdown(f"**{ticker_symbol} - Last Month's Price**")
+            # --- Real-Time Intraday Graph (FIXED) ---
+            st.markdown(f"**{ticker_symbol} - 5 Day Intraday Price**")
             try:
-                end_date = datetime.today()
-                start_date = end_date - timedelta(days=30)
-                hist_data = fetch_stock_data(ticker_symbol, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+                # Fetch last 5 days of data at a 30-minute interval
+                hist_data = yf.download(ticker_symbol, period="5d", interval="30m", progress=False)
                 
                 if not hist_data.empty:
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price'))
-                    fig.update_layout(height=200, margin=dict(l=10, r=10, t=20, b=10), showlegend=False, xaxis_title="", yaxis_title="Price")
+                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
+                    fig.update_layout(
+                        height=200, 
+                        margin=dict(l=10, r=10, t=20, b=20),
+                        xaxis_title="", yaxis_title="Price",
+                        xaxis_showgrid=False, yaxis_showgrid=False
+                    )
                     st.plotly_chart(fig, use_container_width=True)
                 else:
-                    st.warning("Could not fetch historical data for the chart.")
+                    st.warning("Could not fetch intraday data for the chart.")
             except Exception:
                 st.error("An error occurred while fetching chart data.")
 
     # --- Tool 2: Financial Sentiment Analysis ---
-    with st.expander("😊 Financial Sentiment Analysis"):
+    with st.expander("😊 Financial Sentiment Analysis", expanded=True):
         user_text = st.text_area("Enter text to analyze:", "Apple's stock soared after their strong quarterly earnings report.", height=100)
         if st.button("Analyze Sentiment"):
             with st.spinner("Analyzing..."):
@@ -180,9 +194,19 @@ with st.sidebar:
                 else: st.info(f"Sentiment: {sentiment} (Score: {score:.2f})")
 
     # --- Tool 3: Portfolio Performance Analysis ---
-    with st.expander("📁 Portfolio Performance Analysis"):
-        st.write("Upload a CSV/XLSX file with 'Date' and 'Close' columns.")
-        # Placeholder for full feature
+    with st.expander("📁 Portfolio Performance Analysis", expanded=True):
+        uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'])
+        if uploaded_file:
+            try:
+                df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
+                if 'Date' in df.columns and 'Close' in df.columns:
+                    df['Date'] = pd.to_datetime(df['Date']); df = df.set_index('Date')
+                    _, cum_returns, volatility, sharpe = analyze_portfolio(df)
+                    st.metric("Total Return", f"{cum_returns.iloc[-1]:.2%}")
+                    st.metric("Annualized Volatility", f"{volatility:.2%}")
+                    st.metric("Sharpe Ratio", f"{sharpe:.2f}")
+                else: st.error("File must contain 'Date' and 'Close' columns.")
+            except Exception as e: st.error(f"Error processing file: {e}")
         
 # =================================================================================
 # ✅ MAIN PAGE - CHATBOT & FORECASTING
@@ -192,7 +216,7 @@ st.title("Natural Language Financial Q&A")
 
 # --- Chatbot Interface ---
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help with your financial questions today?"}]
+    st.session_state.messages = [{"role": "assistant", content: "Hello! How can I help with your financial questions today?"}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -218,7 +242,6 @@ if st.button("Generate Forecast"):
         data = fetch_stock_data(forecast_ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
         if not data.empty:
             train, valid = forecast_stock(data)
-            # --- THIS IS THE CORRECTED LINE ---
             if train is not None:
                 fig = plot_forecast(train, valid)
                 st.plotly_chart(fig, use_container_width=True)
