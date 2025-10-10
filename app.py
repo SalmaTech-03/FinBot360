@@ -59,7 +59,7 @@ def analyze_sentiment(text: str):
     return load_sentiment_model()(text)[0]
 
 @st.cache_data
-def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame: # <<< THIS IS THE FIX
+def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     data = yf.download(ticker, start=start_date, end=end_date, progress=False)
     if data.empty:
         st.warning(f"No data found for ticker '{ticker}'. Please check the symbol.")
@@ -177,14 +177,21 @@ with st.sidebar:
                     st.error("Both Alpha Vantage & Yahoo Finance failed.")
                     logging.error(f"YFinance fallback also failed: {yf_e}")
 
-            # --- Intraday Graph ---
-            st.markdown(f"**{ticker_symbol} - 5 Day Intraday Price**")
+            # --- Historical Bar Chart (THE FIX) ---
+            st.markdown(f"**{ticker_symbol} - Last Month's Daily Price**")
             try:
-                hist_data = yf.download(ticker_symbol, period="5d", interval="30m", progress=False)
+                # Fetch last 1 month of daily data
+                hist_data = yf.download(ticker_symbol, period="1mo", interval="1d", progress=False)
                 if not hist_data.empty:
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
-                    fig.update_layout(height=200, margin=dict(l=10, r=10, t=20, b=20), xaxis_title="", yaxis_title="Price", xaxis_showgrid=False, yaxis_showgrid=False)
+                    # Add Bar chart trace
+                    fig.add_trace(go.Bar(x=hist_data.index, y=hist_data['Close'], name='Close Price', marker_color='#007bff'))
+                    fig.update_layout(
+                        height=200, 
+                        margin=dict(l=10, r=10, t=20, b=20),
+                        xaxis_title="", yaxis_title="Price",
+                        xaxis_showgrid=False, yaxis_showgrid=False
+                    )
                     st.plotly_chart(fig, use_container_width=True)
             except Exception:
                 st.error("An error occurred while fetching chart data.")
