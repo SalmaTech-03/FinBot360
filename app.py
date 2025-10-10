@@ -41,7 +41,7 @@ except (KeyError, FileNotFoundError):
 # =================================================================================
 # ALL HELPER FUNCTIONS
 # =================================================================================
-def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -> str:
+def get_llm_response(prompt: str, model_name: str = "gemini-2.5-flash") -> str:
     if not GEMINI_AVAILABLE: return "Chatbot is unavailable because the Gemini API key is not configured."
     try:
         model = genai.GenerativeModel(model_name)
