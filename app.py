@@ -59,7 +59,7 @@ def analyze_sentiment(text: str):
     return load_sentiment_model()(text)[0]
 
 @st.cache_data
-def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame: # <<< THIS IS THE FIX
+def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     data = yf.download(ticker, start=start_date, end=end_date, progress=False)
     if data.empty:
         st.warning(f"No data found for ticker '{ticker}'. Please check the symbol.")
@@ -121,14 +121,6 @@ def forecast_stock(data: pd.DataFrame):
     valid['Predictions'] = predictions
     return train, valid
 
-def plot_forecast(train, valid):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
-    fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)'))
-    fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices'))
-    fig.update_layout(title='Stock Price Forecast vs. Actual', xaxis_title='Date', yaxis_title='Stock Price ($)')
-    return fig
-
 # =================================================================================
 # ✅ SIDEBAR - TOOLS & CONTROLS
 # =================================================================================
@@ -147,7 +139,7 @@ with st.sidebar:
     st.markdown("---")
     st.header("Financial Tools")
 
-    # --- Tool 1: Live Market Dashboard ---
+    # --- Tool 1: Live Market Dashboard (GRAPH REMOVED) ---
     with st.expander("🔴 Live Market Dashboard", expanded=True):
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter Ticker:", "IBM").upper()
@@ -176,23 +168,6 @@ with st.sidebar:
                 except Exception as yf_e:
                     st.error("Both Alpha Vantage & Yahoo Finance failed.")
                     logging.error(f"YFinance fallback also failed: {yf_e}")
-
-            # --- Historical Line Chart ---
-            st.markdown(f"**{ticker_symbol} - Last Month's Daily Price**")
-            try:
-                hist_data = yf.download(ticker_symbol, period="1mo", interval="1d", progress=False)
-                if not hist_data.empty:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
-                    fig.update_layout(
-                        height=200, 
-                        margin=dict(l=10, r=10, t=20, b=20),
-                        xaxis_title="", yaxis_title="Price",
-                        xaxis_showgrid=False, yaxis_showgrid=False
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-            except Exception:
-                st.error("An error occurred while fetching chart data.")
 
     # --- Tool 2: Financial Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis", expanded=True):
@@ -248,15 +223,17 @@ st.markdown("---")
 # --- Stock Forecasting Module (on main page) ---
 st.subheader("📈 Stock Forecasting")
 
-if 'forecast_fig' not in st.session_state:
-    st.session_state.forecast_fig = None
+# Initialize session state for the forecast DataFrame
+if 'forecast_df' not in st.session_state:
+    st.session_state.forecast_df = None
 if 'last_forecast_ticker' not in st.session_state:
     st.session_state.last_forecast_ticker = ""
 
 forecast_ticker = st.text_input("Enter Stock Symbol for Forecasting:", st.session_state.last_forecast_ticker or "NVDA").upper()
 
+# Clear old forecast if ticker changes
 if forecast_ticker != st.session_state.last_forecast_ticker:
-    st.session_state.forecast_fig = None
+    st.session_state.forecast_df = None
     st.session_state.last_forecast_ticker = forecast_ticker
 
 if st.button("Generate Forecast"):
@@ -264,15 +241,18 @@ if st.button("Generate Forecast"):
         data = fetch_stock_data(forecast_ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
         if not data.empty:
             train, valid = forecast_stock(data)
-            if train is not None:
-                st.session_state.forecast_fig = plot_forecast(train, valid)
+            if valid is not None:
+                # Store the DataFrame with results in session state
+                st.session_state.forecast_df = valid[['Close', 'Predictions']]
             else:
-                st.session_state.forecast_fig = None
+                st.session_state.forecast_df = None
         else:
-            st.session_state.forecast_fig = None
+            st.session_state.forecast_df = None
     else:
         st.warning("Please enter a stock ticker to generate a forecast.")
-        st.session_state.forecast_fig = None
+        st.session_state.forecast_df = None
 
-if st.session_state.forecast_fig is not None:
-    st.plotly_chart(st.session_state.forecast_fig, use_container_width=True)
+# Always display the DataFrame from session state if it exists
+if st.session_state.forecast_df is not None:
+    st.subheader("Forecast vs. Actual Prices")
+    st.dataframe(st.session_state.forecast_df)
