@@ -59,7 +59,7 @@ def analyze_sentiment(text: str):
     return load_sentiment_model()(text)[0]
 
 @st.cache_data
-def fetch_stock_.data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame: # <<< THIS IS THE FIX
     data = yf.download(ticker, start=start_date, end=end_date, progress=False)
     if data.empty:
         st.warning(f"No data found for ticker '{ticker}'. Please check the symbol.")
@@ -152,7 +152,7 @@ with st.sidebar:
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter Ticker:", "IBM").upper()
         if ticker_symbol:
-            # --- Live Price with Fallback Mechanism (THE KEY FIX) ---
+            # --- Live Price with Fallback Mechanism ---
             try:
                 # PRIMARY SOURCE: Alpha Vantage
                 AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
