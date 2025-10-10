@@ -138,7 +138,9 @@ with st.sidebar:
         if GEMINI_AVAILABLE: st.success("Gemini API: Connected")
         else: st.error("Gemini API: Disconnected")
         try:
-            st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected")
+            # Check for the key's existence without displaying it
+            st.secrets["ALPHA_VANTAGE_API_KEY"]
+            st.success("Alpha Vantage: Connected")
         except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found")
         st.info("Yahoo Finance: Connected")
 
@@ -150,20 +152,21 @@ with st.sidebar:
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter Ticker:", "IBM").upper()
         if ticker_symbol:
-            # --- Live Price (Alpha Vantage) - CORRECTED ---
+            # --- Live Price (Alpha Vantage) ---
             try:
                 AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
                 ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
                 quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
                 
-                # Use .iloc[0] for robust row selection
                 price = float(quote_data['05. price'].iloc[0])
                 change = float(quote_data['09. change'].iloc[0])
                 change_percent = float(quote_data['10. change percent'].iloc[0].replace('%',''))
                 
                 st.metric("Live Price (Alpha Vantage)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
             except Exception as e:
-                st.error("Could not fetch live price. API limit may be reached.")
+                # --- THIS IS THE CRITICAL CHANGE ---
+                # Display the actual error message for debugging
+                st.error(f"Alpha Vantage Error: {e}")
                 logging.error(f"Alpha Vantage Error: {e}")
 
             # --- Real-Time Intraday Graph ---
@@ -172,7 +175,7 @@ with st.sidebar:
                 hist_data = yf.download(ticker_symbol, period="5d", interval="30m", progress=False)
                 if not hist_data.empty:
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
+                    fig.add_trace(go.Scatter(x= hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
                     fig.update_layout(height=200, margin=dict(l=10, r=10, t=20, b=20), xaxis_title="", yaxis_title="Price", xaxis_showgrid=False, yaxis_showgrid=False)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
