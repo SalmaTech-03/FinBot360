@@ -60,7 +60,7 @@ def analyze_sentiment(text: str):
 
 @st.cache_data
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
-    data = yf.download(ticker, start=start_date, end=end_date)
+    data = yf.download(ticker, start=start_date, end=end_date, progress=False)
     if data.empty:
         st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
         return pd.DataFrame()
@@ -140,7 +140,6 @@ with st.sidebar:
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter Ticker:", "IBM").upper()
         if ticker_symbol:
-            # --- Live Price (Alpha Vantage) ---
             try:
                 AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
                 ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
@@ -153,29 +152,21 @@ with st.sidebar:
             except Exception:
                 st.error("Could not fetch live price. API limit may be reached.")
 
-            # --- Historical Graph (yfinance) --- # <<< THIS IS THE FIX
             st.markdown(f"**{ticker_symbol} - Last Month's Price**")
             try:
                 end_date = datetime.today()
                 start_date = end_date - timedelta(days=30)
-                hist_data = yf.download(ticker_symbol, start=start_date, end=end_date, progress=False)
+                hist_data = fetch_stock_data(ticker_symbol, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
                 
                 if not hist_data.empty:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price'))
-                    fig.update_layout(
-                        height=200, 
-                        margin=dict(l=10, r=10, t=20, b=10),
-                        showlegend=False,
-                        xaxis_title="",
-                        yaxis_title="Price"
-                    )
+                    fig.update_layout(height=200, margin=dict(l=10, r=10, t=20, b=10), showlegend=False, xaxis_title="", yaxis_title="Price")
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("Could not fetch historical data for the chart.")
             except Exception:
                 st.error("An error occurred while fetching chart data.")
-
 
     # --- Tool 2: Financial Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis"):
@@ -227,7 +218,8 @@ if st.button("Generate Forecast"):
         data = fetch_stock_data(forecast_ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
         if not data.empty:
             train, valid = forecast_stock(data)
-            if train is not a None:
+            # --- THIS IS THE CORRECTED LINE ---
+            if train is not None:
                 fig = plot_forecast(train, valid)
                 st.plotly_chart(fig, use_container_width=True)
     else:
