@@ -8,11 +8,7 @@
 
 **FinBot 360** is a comprehensive, AI-driven financial dashboard designed to empower investors with real-time data, predictive insights, and conversational financial analysis. This application integrates multiple AI and data science modules into a single, intuitive interface, serving as a one-stop solution for market analysis.
 
----
 
-## ✨ Live Application
-
-### 👉 [**Launch FinBot 360**](https://finbot360-4dgbeq9msxs4ywczrmet4v.streamlit.app/)
 
 ---
 
