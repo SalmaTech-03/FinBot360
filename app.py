@@ -59,7 +59,7 @@ def analyze_sentiment(text: str):
     return load_sentiment_model()(text)[0]
 
 @st.cache_data
-def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+def fetch_stock_.data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     data = yf.download(ticker, start=start_date, end=end_date, progress=False)
     if data.empty:
         st.warning(f"No data found for ticker '{ticker}'. Please check the symbol.")
@@ -140,8 +140,7 @@ with st.sidebar:
         if GEMINI_AVAILABLE: st.success("Gemini API: Connected")
         else: st.error("Gemini API: Disconnected")
         try:
-            st.secrets["ALPHA_VANTAGE_API_KEY"]
-            st.success("Alpha Vantage: Connected")
+            st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected")
         except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found")
         st.info("Yahoo Finance: Connected")
 
@@ -153,7 +152,9 @@ with st.sidebar:
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter Ticker:", "IBM").upper()
         if ticker_symbol:
+            # --- Live Price with Fallback Mechanism (THE KEY FIX) ---
             try:
+                # PRIMARY SOURCE: Alpha Vantage
                 AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
                 ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
                 quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
@@ -162,10 +163,21 @@ with st.sidebar:
                 change_percent = float(quote_data['10. change percent'].iloc[0].replace('%',''))
                 st.metric("Live Price (Alpha Vantage)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
             except Exception as e:
-                # --- THIS IS THE KEY FIX: SHOW THE REAL ERROR ---
-                st.error(f"Alpha Vantage Error: {e}")
-                logging.error(f"Alpha Vantage Error: {e}")
+                # FALLBACK SOURCE: Yahoo Finance
+                logging.warning(f"Alpha Vantage failed: {e}. Falling back to yfinance.")
+                try:
+                    yf_ticker = yf.Ticker(ticker_symbol)
+                    info = yf_ticker.info
+                    price = info.get("currentPrice", 0)
+                    previous_close = info.get("previousClose", 1)
+                    change = price - previous_close
+                    change_percent = (change / previous_close) * 100
+                    st.metric("Live Price (Yahoo Finance)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
+                except Exception as yf_e:
+                    st.error("Both Alpha Vantage & Yahoo Finance failed.")
+                    logging.error(f"YFinance fallback also failed: {yf_e}")
 
+            # --- Intraday Graph ---
             st.markdown(f"**{ticker_symbol} - 5 Day Intraday Price**")
             try:
                 hist_data = yf.download(ticker_symbol, period="5d", interval="30m", progress=False)
@@ -174,9 +186,8 @@ with st.sidebar:
                     fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
                     fig.update_layout(height=200, margin=dict(l=10, r=10, t=20, b=20), xaxis_title="", yaxis_title="Price", xaxis_showgrid=False, yaxis_showgrid=False)
                     st.plotly_chart(fig, use_container_width=True)
-            except Exception as e:
+            except Exception:
                 st.error("An error occurred while fetching chart data.")
-                logging.error(f"YFinance Chart Error: {e}")
 
     # --- Tool 2: Financial Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis", expanded=True):
@@ -189,7 +200,7 @@ with st.sidebar:
                 elif sentiment == 'NEGATIVE': st.error(f"Sentiment: {sentiment} (Score: {score:.2f})")
                 else: st.info(f"Sentiment: {sentiment} (Score: {score:.2f})")
 
-    # --- Tool 3: Portfolio Performance Analysis (FULLY IMPLEMENTED) ---
+    # --- Tool 3: Portfolio Performance Analysis ---
     with st.expander("📁 Portfolio Performance Analysis", expanded=True):
         uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX file", type=['csv', 'xlsx'], key="portfolio_uploader")
         if uploaded_file:
