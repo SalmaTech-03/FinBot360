@@ -62,14 +62,16 @@ def analyze_sentiment(text: str):
 def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
     data = yf.download(ticker, start=start_date, end=end_date, progress=False)
     if data.empty:
-        st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
+        st.warning(f"No data found for ticker '{ticker}'. Please check the symbol.")
         return pd.DataFrame()
     return data
 
 def analyze_portfolio(df: pd.DataFrame):
-    if 'Close' not in df.columns:
-        st.error("Uploaded file must contain a 'Close' column for analysis.")
+    if 'Close' not in df.columns or 'Date' not in df.columns:
+        st.error("Uploaded file must contain 'Date' and 'Close' columns.")
         return None, None, None, None
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.set_index('Date')
     daily_returns = df['Close'].pct_change().dropna()
     cumulative_returns = (1 + daily_returns).cumprod() - 1
     volatility = daily_returns.std() * np.sqrt(252)
@@ -138,9 +140,7 @@ with st.sidebar:
         if GEMINI_AVAILABLE: st.success("Gemini API: Connected")
         else: st.error("Gemini API: Disconnected")
         try:
-            # Check for the key's existence without displaying it
-            st.secrets["ALPHA_VANTAGE_API_KEY"]
-            st.success("Alpha Vantage: Connected")
+            st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected")
         except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found")
         st.info("Yahoo Finance: Connected")
 
@@ -152,37 +152,27 @@ with st.sidebar:
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter Ticker:", "IBM").upper()
         if ticker_symbol:
-            # --- Live Price (Alpha Vantage) ---
             try:
                 AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
                 ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
                 quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
-                
                 price = float(quote_data['05. price'].iloc[0])
                 change = float(quote_data['09. change'].iloc[0])
                 change_percent = float(quote_data['10. change percent'].iloc[0].replace('%',''))
-                
                 st.metric("Live Price (Alpha Vantage)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
             except Exception as e:
-                # --- THIS IS THE CRITICAL CHANGE ---
-                # Display the actual error message for debugging
-                st.error(f"Alpha Vantage Error: {e}")
-                logging.error(f"Alpha Vantage Error: {e}")
+                st.error("Could not fetch live price. API limit may be reached.")
 
-            # --- Real-Time Intraday Graph ---
             st.markdown(f"**{ticker_symbol} - 5 Day Intraday Price**")
             try:
                 hist_data = yf.download(ticker_symbol, period="5d", interval="30m", progress=False)
                 if not hist_data.empty:
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x= hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
+                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
                     fig.update_layout(height=200, margin=dict(l=10, r=10, t=20, b=20), xaxis_title="", yaxis_title="Price", xaxis_showgrid=False, yaxis_showgrid=False)
                     st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Could not fetch intraday data for the chart.")
             except Exception as e:
                 st.error("An error occurred while fetching chart data.")
-                logging.error(f"YFinance Chart Error: {e}")
 
     # --- Tool 2: Financial Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis", expanded=True):
@@ -197,18 +187,17 @@ with st.sidebar:
 
     # --- Tool 3: Portfolio Performance Analysis ---
     with st.expander("📁 Portfolio Performance Analysis", expanded=True):
-        uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'])
+        uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'], key="portfolio_uploader")
         if uploaded_file:
             try:
                 df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
-                if 'Date' in df.columns and 'Close' in df.columns:
-                    df['Date'] = pd.to_datetime(df['Date']); df = df.set_index('Date')
-                    _, cum_returns, volatility, sharpe = analyze_portfolio(df)
+                daily_returns, cum_returns, volatility, sharpe = analyze_portfolio(df)
+                if cum_returns is not None:
                     st.metric("Total Return", f"{cum_returns.iloc[-1]:.2%}")
                     st.metric("Annualized Volatility", f"{volatility:.2%}")
                     st.metric("Sharpe Ratio", f"{sharpe:.2f}")
-                else: st.error("File must contain 'Date' and 'Close' columns.")
-            except Exception as e: st.error(f"Error processing file: {e}")
+            except Exception as e:
+                st.error(f"Error processing file: {e}")
         
 # =================================================================================
 # ✅ MAIN PAGE - CHATBOT & FORECASTING
@@ -236,16 +225,38 @@ if prompt := st.chat_input("Ask a financial question..."):
 
 st.markdown("---")
 
-# --- Stock Forecasting Module (on main page) ---
+# --- Stock Forecasting Module (on main page) --- # <<< ENTIRELY REWRITTEN
 st.subheader("📈 Stock Forecasting")
-forecast_ticker = st.text_input("Enter Stock Symbol for Forecasting:", "NVDA").upper()
+
+# Initialize session state for forecasting
+if 'forecast_fig' not in st.session_state:
+    st.session_state.forecast_fig = None
+if 'last_forecast_ticker' not in st.session_state:
+    st.session_state.last_forecast_ticker = ""
+
+forecast_ticker = st.text_input("Enter Stock Symbol for Forecasting:", st.session_state.last_forecast_ticker or "NVDA").upper()
+
+# If the user enters a new ticker, clear the old forecast to avoid confusion
+if forecast_ticker != st.session_state.last_forecast_ticker:
+    st.session_state.forecast_fig = None
+    st.session_state.last_forecast_ticker = forecast_ticker
+
 if st.button("Generate Forecast"):
     if forecast_ticker:
         data = fetch_stock_data(forecast_ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
         if not data.empty:
             train, valid = forecast_stock(data)
             if train is not None:
-                fig = plot_forecast(train, valid)
-                st.plotly_chart(fig, use_container_width=True)
+                # Store the new figure in session state
+                st.session_state.forecast_fig = plot_forecast(train, valid)
+            else:
+                st.session_state.forecast_fig = None # Clear if forecast fails
+        else:
+            st.session_state.forecast_fig = None # Clear if data fetch fails
     else:
         st.warning("Please enter a stock ticker to generate a forecast.")
+        st.session_state.forecast_fig = None
+
+# Always check session state to display the chart, making it persistent
+if st.session_state.forecast_fig is not None:
+    st.plotly_chart(st.session_state.forecast_fig, use_container_width=True)```
