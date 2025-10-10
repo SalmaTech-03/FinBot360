@@ -154,28 +154,21 @@ with st.sidebar:
                 AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
                 ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
                 quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
-                price = float(quote_data['05. price'][0])
+                price = float(quote_data['05. price'][.0])
                 change = float(quote_data['09. change'][0])
                 change_percent = float(quote_data['10. change percent'][0].replace('%',''))
                 st.metric("Live Price (Alpha Vantage)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
             except Exception:
                 st.error("Could not fetch live price.")
 
-            # --- Real-Time Intraday Graph (FIXED) ---
             st.markdown(f"**{ticker_symbol} - 5 Day Intraday Price**")
             try:
-                # Fetch last 5 days of data at a 30-minute interval
                 hist_data = yf.download(ticker_symbol, period="5d", interval="30m", progress=False)
                 
                 if not hist_data.empty:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
-                    fig.update_layout(
-                        height=200, 
-                        margin=dict(l=10, r=10, t=20, b=20),
-                        xaxis_title="", yaxis_title="Price",
-                        xaxis_showgrid=False, yaxis_showgrid=False
-                    )
+                    fig.update_layout(height=200, margin=dict(l=10, r=10, t=20, b=20), xaxis_title="", yaxis_title="Price", xaxis_showgrid=False, yaxis_showgrid=False)
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("Could not fetch intraday data for the chart.")
@@ -215,8 +208,9 @@ with st.sidebar:
 st.title("Natural Language Financial Q&A")
 
 # --- Chatbot Interface ---
+# --- THIS IS THE CORRECTED LINE ---
 if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", content: "Hello! How can I help with your financial questions today?"}]
+    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help with your financial questions today?"}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
