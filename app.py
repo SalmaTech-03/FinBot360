@@ -162,7 +162,8 @@ with st.sidebar:
                 change_percent = float(quote_data['10. change percent'].iloc[0].replace('%',''))
                 st.metric("Live Price (Alpha Vantage)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
             except Exception as e:
-                st.error("Could not fetch live price. API limit may be reached.")
+                # --- THIS IS THE KEY FIX: SHOW THE REAL ERROR ---
+                st.error(f"Alpha Vantage Error: {e}")
                 logging.error(f"Alpha Vantage Error: {e}")
 
             st.markdown(f"**{ticker_symbol} - 5 Day Intraday Price**")
@@ -188,9 +189,9 @@ with st.sidebar:
                 elif sentiment == 'NEGATIVE': st.error(f"Sentiment: {sentiment} (Score: {score:.2f})")
                 else: st.info(f"Sentiment: {sentiment} (Score: {score:.2f})")
 
-    # --- Tool 3: Portfolio Performance Analysis ---
+    # --- Tool 3: Portfolio Performance Analysis (FULLY IMPLEMENTED) ---
     with st.expander("📁 Portfolio Performance Analysis", expanded=True):
-        uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX", type=['csv', 'xlsx'], key="portfolio_uploader")
+        uploaded_file = st.file_uploader("Upload portfolio CSV/XLSX file", type=['csv', 'xlsx'], key="portfolio_uploader")
         if uploaded_file:
             try:
                 df = pd.read_csv(uploaded_file) if uploaded_file.name.endswith('.csv') else pd.read_excel(uploaded_file)
