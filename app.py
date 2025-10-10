@@ -140,7 +140,8 @@ with st.sidebar:
         if GEMINI_AVAILABLE: st.success("Gemini API: Connected")
         else: st.error("Gemini API: Disconnected")
         try:
-            st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected")
+            st.secrets["ALPHA_VANTAGE_API_KEY"]
+            st.success("Alpha Vantage: Connected")
         except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found")
         st.info("Yahoo Finance: Connected")
 
@@ -162,6 +163,7 @@ with st.sidebar:
                 st.metric("Live Price (Alpha Vantage)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
             except Exception as e:
                 st.error("Could not fetch live price. API limit may be reached.")
+                logging.error(f"Alpha Vantage Error: {e}")
 
             st.markdown(f"**{ticker_symbol} - 5 Day Intraday Price**")
             try:
@@ -173,6 +175,7 @@ with st.sidebar:
                     st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
                 st.error("An error occurred while fetching chart data.")
+                logging.error(f"YFinance Chart Error: {e}")
 
     # --- Tool 2: Financial Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis", expanded=True):
@@ -225,10 +228,9 @@ if prompt := st.chat_input("Ask a financial question..."):
 
 st.markdown("---")
 
-# --- Stock Forecasting Module (on main page) --- # <<< ENTIRELY REWRITTEN
+# --- Stock Forecasting Module (on main page) ---
 st.subheader("📈 Stock Forecasting")
 
-# Initialize session state for forecasting
 if 'forecast_fig' not in st.session_state:
     st.session_state.forecast_fig = None
 if 'last_forecast_ticker' not in st.session_state:
@@ -236,7 +238,6 @@ if 'last_forecast_ticker' not in st.session_state:
 
 forecast_ticker = st.text_input("Enter Stock Symbol for Forecasting:", st.session_state.last_forecast_ticker or "NVDA").upper()
 
-# If the user enters a new ticker, clear the old forecast to avoid confusion
 if forecast_ticker != st.session_state.last_forecast_ticker:
     st.session_state.forecast_fig = None
     st.session_state.last_forecast_ticker = forecast_ticker
@@ -247,16 +248,14 @@ if st.button("Generate Forecast"):
         if not data.empty:
             train, valid = forecast_stock(data)
             if train is not None:
-                # Store the new figure in session state
                 st.session_state.forecast_fig = plot_forecast(train, valid)
             else:
-                st.session_state.forecast_fig = None # Clear if forecast fails
+                st.session_state.forecast_fig = None
         else:
-            st.session_state.forecast_fig = None # Clear if data fetch fails
+            st.session_state.forecast_fig = None
     else:
         st.warning("Please enter a stock ticker to generate a forecast.")
         st.session_state.forecast_fig = None
 
-# Always check session state to display the chart, making it persistent
 if st.session_state.forecast_fig is not None:
-    st.plotly_chart(st.session_state.forecast_fig, use_container_width=True)```
+    st.plotly_chart(st.session_state.forecast_fig, use_container_width=True)
