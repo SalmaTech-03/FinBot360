@@ -150,21 +150,26 @@ with st.sidebar:
         st_autorefresh(interval=60 * 1000, key="datarefresh")
         ticker_symbol = st.text_input("Enter Ticker:", "IBM").upper()
         if ticker_symbol:
+            # --- Live Price (Alpha Vantage) - CORRECTED ---
             try:
                 AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
                 ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
                 quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
-                price = float(quote_data['05. price'][.0])
-                change = float(quote_data['09. change'][0])
-                change_percent = float(quote_data['10. change percent'][0].replace('%',''))
+                
+                # Use .iloc[0] for robust row selection
+                price = float(quote_data['05. price'].iloc[0])
+                change = float(quote_data['09. change'].iloc[0])
+                change_percent = float(quote_data['10. change percent'].iloc[0].replace('%',''))
+                
                 st.metric("Live Price (Alpha Vantage)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
-            except Exception:
-                st.error("Could not fetch live price.")
+            except Exception as e:
+                st.error("Could not fetch live price. API limit may be reached.")
+                logging.error(f"Alpha Vantage Error: {e}")
 
+            # --- Real-Time Intraday Graph ---
             st.markdown(f"**{ticker_symbol} - 5 Day Intraday Price**")
             try:
                 hist_data = yf.download(ticker_symbol, period="5d", interval="30m", progress=False)
-                
                 if not hist_data.empty:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', line_color='#007bff'))
@@ -172,8 +177,9 @@ with st.sidebar:
                     st.plotly_chart(fig, use_container_width=True)
                 else:
                     st.warning("Could not fetch intraday data for the chart.")
-            except Exception:
+            except Exception as e:
                 st.error("An error occurred while fetching chart data.")
+                logging.error(f"YFinance Chart Error: {e}")
 
     # --- Tool 2: Financial Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis", expanded=True):
@@ -208,7 +214,6 @@ with st.sidebar:
 st.title("Natural Language Financial Q&A")
 
 # --- Chatbot Interface ---
-# --- THIS IS THE CORRECTED LINE ---
 if "messages" not in st.session_state:
     st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help with your financial questions today?"}]
 
