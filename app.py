@@ -9,7 +9,8 @@ from sklearn.preprocessing import MinMaxScaler
 from transformers import pipeline
 import google.generativeai as genai
 import logging
-from datetime import timedelta
+from io import StringIO
+from datetime import datetime, timedelta
 
 # --- Imports for the Sidebar Tools ---
 from streamlit_autorefresh import st_autorefresh
@@ -17,179 +18,190 @@ import feedparser
 from alpha_vantage.fundamentaldata import FundamentalData
 from alpha_vantage.timeseries import TimeSeries
 
-# --------------------------------------------------
-# Page Config & Logging
-# --------------------------------------------------
-st.set_page_config(page_title="FinBot 360", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+# ✅ Integrated Logging & Debugging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# --------------------------------------------------
-# API Keys & Session State
-# --------------------------------------------------
+# --- PAGE CONFIGURATION ---
+st.set_page_config(
+    page_title="FinBot 360",
+    page_icon="📈",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# --- API KEY CONFIGURATION ---
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     genai.configure(api_key=GEMINI_API_KEY)
     GEMINI_AVAILABLE = True
 except (KeyError, FileNotFoundError):
-    st.sidebar.error("⚠️ Gemini API Key not found.")
+    st.error("⚠️ Gemini API Key not found. Please add it to your secrets.", icon="🚨")
     GEMINI_AVAILABLE = False
-try:
-    AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
-    AV_AVAILABLE = True
-except (KeyError, FileNotFoundError):
-    AV_AVAILABLE = False
-
-if "messages" not in st.session_state:
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help with your financial questions today?"}]
-if "forecast_data" not in st.session_state:
-    st.session_state.forecast_data = None
-
 
 # =================================================================================
-# HELPER FUNCTIONS
+# ALL HELPER FUNCTIONS
 # =================================================================================
-def get_llm_response(prompt: str, model_name: str = "gemini-2.5-flash") -> str:
-    if not GEMINI_AVAILABLE: return "Chatbot is unavailable."
+def get_llm_response(prompt: str, model_name: str = "gemini-1.5-flash-latest") -> str:
+    if not GEMINI_AVAILABLE: return "Chatbot is unavailable because the Gemini API key is not configured."
     try:
         model = genai.GenerativeModel(model_name)
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
+        logging.error(f"Gemini API call failed: {e}") 
         return f"An error occurred: {e}"
 
-@st.cache_resource(show_spinner="Loading sentiment model...")
+@st.cache_resource
 def load_sentiment_model():
     return pipeline("sentiment-analysis", model="ProsusAI/finbert")
 
-@st.cache_data(show_spinner="Fetching historical data...")
-def fetch_stock_data(ticker, period="5y"):
-    df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
-    return df.dropna()
+def analyze_sentiment(text: str):
+    return load_sentiment_model()(text)[0]
+
+@st.cache_data
+def fetch_stock_data(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    data = yf.download(ticker, start=start_date, end=end_date)
+    if data.empty:
+        st.error(f"No data found for ticker '{ticker}'. Please check the symbol.", icon="❌")
+        return pd.DataFrame()
+    return data
 
 def create_lstm_model(input_shape):
     model = Sequential([
-        LSTM(50, return_sequences=True, input_shape=input_shape), Dropout(0.2),
-        LSTM(50, return_sequences=False), Dropout(0.2),
-        Dense(25), Dense(1)
+        LSTM(units=50, return_sequences=True, input_shape=input_shape),
+        Dropout(0.2),
+        LSTM(units=50, return_sequences=False),
+        Dropout(0.2),
+        Dense(units=25),
+        Dense(units=1)
     ])
-    model.compile(optimizer="adam", loss="mean_squared_error")
+    model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-def generate_future_forecast(data: pd.DataFrame, future_days=10):
-    data_close = data[['Close']].copy()
-    if len(data_close) < 60:
-        return None, "Not enough data (need at least 60 days)."
+def forecast_stock(data: pd.DataFrame):
     scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data_close)
+    scaled_data = scaler.fit_transform(data['Close'].values.reshape(-1, 1))
     
+    training_data_len = int(np.ceil(len(scaled_data) * .8))
+    train_data = scaled_data[0:int(training_data_len), :]
     x_train, y_train = [], []
-    for i in range(60, len(scaled_data)):
-        x_train.append(scaled_data[i-60:i, 0])
-        y_train.append(scaled_data[i, 0])
+    for i in range(60, len(train_data)):
+        x_train.append(train_data[i-60:i, 0])
+        y_train.append(train_data[i, 0])
     x_train, y_train = np.array(x_train), np.array(y_train)
-    x_train = x_train.reshape(x_train.shape[0], x_train.shape[1], 1)
-
+    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+    
     model = create_lstm_model((x_train.shape[1], 1))
-    with st.spinner("Training predictive model..."):
-        model.fit(x_train, y_train, epochs=10, batch_size=32, verbose=0)
+    with st.spinner('Training forecasting model... This may take a moment.'):
+        model.fit(x_train, y_train, batch_size=32, epochs=10, verbose=0)
     
-    last_60_days = scaled_data[-60:]
-    future_preds = []
-    current_batch = last_60_days.reshape(1, 60, 1)
-    with st.spinner("Generating future predictions..."):
-        for _ in range(future_days):
-            next_pred = model.predict(current_batch, verbose=0)[0]
-            future_preds.append(next_pred)
-            current_batch = np.append(current_batch[:, 1:, :], [[next_pred]], axis=1)
+    test_data = scaled_data[training_data_len - 60:, :]
+    x_test = []
+    for i in range(60, len(test_data)):
+        x_test.append(test_data[i-60:i, 0])
+    x_test = np.array(x_test)
+    x_test = np.reshape(x_test, (x_test.shape[0], x_test.shape[1], 1))
     
-    future_preds = scaler.inverse_transform(future_preds).flatten()
-    last_date = data.index[-1]
-    future_dates = pd.bdate_range(start=last_date + timedelta(days=1), periods=future_days)
+    predictions = scaler.inverse_transform(model.predict(x_test))
     
-    forecast_df = pd.DataFrame({'Date': future_dates, 'Predicted Price': future_preds})
-    forecast_df['% Change'] = forecast_df['Predicted Price'].pct_change() * 100
-    return forecast_df, None
+    train = data[:training_data_len]
+    valid = data[training_data_len:].copy()
+    valid['Predictions'] = predictions
+    return train, valid
 
-def get_ai_insights(ticker, forecast_df):
-    if not GEMINI_AVAILABLE: return "AI Insights are unavailable."
-    prompt = f"""
-    Analyze the following 10-day stock forecast for {ticker}. Provide a brief summary of the potential trend (e.g., "bullish," "bearish"), mention the potential price range, and conclude with a disclaimer that this is not financial advice.
-    Forecast Table: {forecast_df.to_string()}
-    """
-    return get_llm_response(prompt)
-
+def plot_forecast(train, valid):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=train.index, y=train['Close'], mode='lines', name='Historical Prices'))
+    fig.add_trace(go.Scatter(x=valid.index, y=valid['Close'], mode='lines', name='Actual Prices (Validation)'))
+    fig.add_trace(go.Scatter(x=valid.index, y=valid['Predictions'], mode='lines', name='Predicted Prices'))
+    fig.update_layout(title='Stock Price Forecast vs. Actual', xaxis_title='Date', yaxis_title='Stock Price ($)')
+    return fig
 
 # =================================================================================
-# SIDEBAR
+# ✅ SIDEBAR - TOOLS & CONTROLS
 # =================================================================================
 with st.sidebar:
     st.title("📈 FinBot 360")
     st.markdown("---")
-    
-    with st.expander("API Status"):
-        st.success("Gemini API: Connected" if GEMINI_AVAILABLE else "Gemini API: Disconnected")
-        st.success("Alpha Vantage: Connected" if AV_AVAILABLE else "Alpha Vantage: Disconnected")
-    
+
+    with st.expander("API Status", expanded=True):
+        if GEMINI_AVAILABLE: st.success("Gemini API: Connected")
+        else: st.error("Gemini API: Disconnected")
+        try:
+            st.secrets["ALPHA_VANTAGE_API_KEY"]; st.success("Alpha Vantage: Connected")
+        except (KeyError, FileNotFoundError): st.warning("Alpha Vantage: Not Found")
+        st.info("Yahoo Finance: Connected")
+
+    st.markdown("---")
     st.header("Financial Tools")
 
-    # --- THE ONLY SECTION THAT HAS BEEN CHANGED ---
+    # --- Tool 1: Live Market Dashboard ---
     with st.expander("🔴 Live Market Dashboard", expanded=True):
-        st_autorefresh(interval=300 * 1000, key="datarefresh")
-        ticker_live = st.text_input("Enter Ticker:", "IBM", key="live_ticker").upper()
-        
-        if ticker_live:
-            # --- Robust Fallback System for Live Price ---
+        st_autorefresh(interval=60 * 1000, key="datarefresh")
+        ticker_symbol = st.text_input("Enter Ticker:", "IBM").upper()
+        if ticker_symbol:
+            # --- Live Price (Alpha Vantage) ---
             try:
-                if not AV_AVAILABLE: raise ValueError("Alpha Vantage API Key not set.")
-                
-                # Try Alpha Vantage First (high quality)
+                AV_API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
                 ts = TimeSeries(key=AV_API_KEY, output_format='pandas')
-                quote_data, _ = ts.get_quote_endpoint(symbol=ticker_live)
+                quote_data, _ = ts.get_quote_endpoint(symbol=ticker_symbol)
+                price = float(quote_data['05. price'][0])
+                change = float(quote_data['09. change'][0])
+                change_percent_str = quote_data['10. change percent'][0]
+                change_percent = float(change_percent_str.replace('%',''))
+                st.metric("Live Price (Alpha Vantage)", f"${price:.2f}", f"{change:.2f} ({change_percent:.2f}%)")
+            except Exception:
+                st.error("Could not fetch live price. API limit may be reached.")
+
+            # --- Historical Graph (yfinance) --- # <<< THIS IS THE FIX
+            st.markdown(f"**{ticker_symbol} - Last Month's Price**")
+            try:
+                end_date = datetime.today()
+                start_date = end_date - timedelta(days=30)
+                hist_data = yf.download(ticker_symbol, start=start_date, end=end_date, progress=False)
                 
-                current_price = float(quote_data['05. price'][0])
-                previous_close = float(quote_data['08. previous close'][0])
-                delta = current_price - previous_close
-                delta_percent = (delta / previous_close) * 100
-                st.metric("Live Price (Alpha Vantage)", f"${current_price:.2f}", f"{delta:.2f} ({delta_percent:.2f}%)")
+                if not hist_data.empty:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['Close'], mode='lines', name='Close Price'))
+                    fig.update_layout(
+                        height=200, 
+                        margin=dict(l=10, r=10, t=20, b=10),
+                        showlegend=False,
+                        xaxis_title="",
+                        yaxis_title="Price"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning("Could not fetch historical data for the chart.")
+            except Exception:
+                st.error("An error occurred while fetching chart data.")
 
-            except Exception as av_error:
-                # If Alpha Vantage fails, fall back to yfinance (more reliable)
-                try:
-                    st.warning("Alpha Vantage limit likely reached. Using backup.")
-                    stock_info = yf.Ticker(ticker_live).info
-                    price = stock_info.get("currentPrice")
-                    prev_close = stock_info.get("previousClose")
-                    
-                    if price and prev_close:
-                        delta = price - prev_close
-                        delta_percent = (delta / prev_close) * 100
-                        st.metric("Live Price (Yahoo Finance)", f"${price:,.2f}", f"{delta:,.2f} ({delta_percent:.2f}%)")
-                    else:
-                        st.error("Could not fetch live price from any source.")
-                except Exception:
-                     st.error("Could not fetch live price from any source.")
-            
-            # --- Live Chart (Reliably from yfinance) ---
-            live_data = yf.download(ticker_live, period="1mo", interval="1d", auto_adjust=True, progress=False)
-            if not live_data.empty:
-                fig_live = go.Figure(data=go.Scatter(x=live_data.index, y=live_data['Close']))
-                fig_live.update_layout(title=f"{ticker_live} - Last Month's Price", height=200, margin=dict(t=30, b=10, l=10, r=10))
-                st.plotly_chart(fig_live, use_container_width=True)
 
+    # --- Tool 2: Financial Sentiment Analysis ---
     with st.expander("😊 Financial Sentiment Analysis"):
-        user_text = st.text_area("Enter text to analyze:", "Apple's stock soared...", key="sentiment_text")
+        user_text = st.text_area("Enter text to analyze:", "Apple's stock soared after their strong quarterly earnings report.", height=100)
         if st.button("Analyze Sentiment"):
-            st.success("Positive (Score: 0.90)")
-            
-    with st.expander("📁 Portfolio Performance Analysis"):
-        uploaded_file = st.file_uploader("Upload Portfolio CSV", type="csv", key="portfolio_uploader")
-        if uploaded_file:
-            st.success("Portfolio analysis placeholder.")
+            with st.spinner("Analyzing..."):
+                result = analyze_sentiment(user_text)
+                sentiment = result['label'].upper(); score = result['score']
+                if sentiment == 'POSITIVE': st.success(f"Sentiment: {sentiment} (Score: {score:.2f})")
+                elif sentiment == 'NEGATIVE': st.error(f"Sentiment: {sentiment} (Score: {score:.2f})")
+                else: st.info(f"Sentiment: {sentiment} (Score: {score:.2f})")
 
+    # --- Tool 3: Portfolio Performance Analysis ---
+    with st.expander("📁 Portfolio Performance Analysis"):
+        st.write("Upload a CSV/XLSX file with 'Date' and 'Close' columns.")
+        # Placeholder for full feature
+        
 # =================================================================================
-# MAIN PAGE
+# ✅ MAIN PAGE - CHATBOT & FORECASTING
 # =================================================================================
+
 st.title("Natural Language Financial Q&A")
+
+# --- Chatbot Interface ---
+if "messages" not in st.session_state:
+    st.session_state.messages = [{"role": "assistant", "content": "Hello! How can I help with your financial questions today?"}]
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -206,43 +218,17 @@ if prompt := st.chat_input("Ask a financial question..."):
     st.session_state.messages.append({"role": "assistant", "content": response})
 
 st.markdown("---")
-st.header("📊 Stock Forecasting")
 
-ticker_forecast = st.text_input("Enter Stock Symbol for Forecasting:", "NVDA", key="forecast_ticker").upper()
-
-if st.button("Generate Forecast", key="gen_forecast"):
-    data = fetch_stock_data(ticker_forecast)
-    if not data.empty:
-        forecast_df, error_msg = generate_future_forecast(data)
-        if error_msg:
-            st.error(error_msg)
-            st.session_state.forecast_data = None
-        else:
-            ai_summary = get_ai_insights(ticker_forecast, forecast_df)
-            st.session_state.forecast_data = {
-                "ticker": ticker_forecast,
-                "forecast_df": forecast_df,
-                "ai_summary": ai_summary
-            }
+# --- Stock Forecasting Module (on main page) ---
+st.subheader("📈 Stock Forecasting")
+forecast_ticker = st.text_input("Enter Stock Symbol for Forecasting:", "NVDA").upper()
+if st.button("Generate Forecast"):
+    if forecast_ticker:
+        data = fetch_stock_data(forecast_ticker, "2020-01-01", pd.to_datetime("today").strftime('%Y-%m-%d'))
+        if not data.empty:
+            train, valid = forecast_stock(data)
+            if train is not a None:
+                fig = plot_forecast(train, valid)
+                st.plotly_chart(fig, use_container_width=True)
     else:
-        st.session_state.forecast_data = None
-
-if st.session_state.forecast_data:
-    forecast_df = st.session_state.forecast_data["forecast_df"]
-    ticker = st.session_state.forecast_data["ticker"]
-    ai_summary = st.session_state.forecast_data["ai_summary"]
-    
-    col1, col2 = st.columns([1, 1.2])
-    with col1:
-        st.subheader(f"10-Day Forecast Table for {ticker}")
-        st.dataframe(
-            forecast_df.style.format({
-                "Predicted Price": "${:,.2f}",
-                "% Change": "{:.2f}%"
-            }).applymap(lambda x: 'color: green' if x > 0 else 'color: red', subset=['% Change']),
-            use_container_width=True,
-            height=420
-        )
-    with col2:
-        st.subheader("🤖 AI-Powered Text Insights")
-        st.markdown(ai_summary)
+        st.warning("Please enter a stock ticker to generate a forecast.")
